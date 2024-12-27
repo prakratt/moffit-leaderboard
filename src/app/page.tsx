@@ -10,17 +10,17 @@ interface User {
   checkInTime?: number
 }
 
-const MEDAL_STYLES = {
+const MEDAL_STYLES: { [key: number]: string } = {
   1: "bg-yellow-100 border-yellow-400",
   2: "bg-gray-100 border-gray-400",
   3: "bg-orange-100 border-orange-400"
-};
+} as const;
 
-const MEDAL_ICONS = {
+const MEDAL_ICONS: { [key: number]: string } = {
   1: "🏆",
   2: "🥈",
   3: "🥉"
-};
+} as const;
 
 export default function Home() {
   const [users, setUsers] = useState<User[]>([
@@ -181,10 +181,10 @@ export default function Home() {
                   <tr 
                     key={user.id}
                     className={`border-t ${loggedInUser?.id === user.id ? 'bg-blue-50' : ''}
-                      ${index < 3 ? `${MEDAL_STYLES[index + 1]} border-l-4` : ''}`}
+                      ${index < 3 ? `${MEDAL_STYLES[(index + 1) as 1 | 2 | 3]} border-l-4` : ''}`}
                   >
                     <td className="px-6 py-4 text-black">
-                      {index < 3 ? MEDAL_ICONS[index + 1] : index + 1}
+                      {index < 3 ? MEDAL_ICONS[(index + 1) as 1 | 2 | 3] : index + 1}
                     </td>
                     <td className="px-6 py-4 text-black">{user.name}</td>
                     <td className="px-6 py-4 text-black">{user.timeSpent}</td>
