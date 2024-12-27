@@ -1,101 +1,200 @@
-import Image from "next/image";
+// app/page.tsx
+'use client'
+import { useState, useEffect } from 'react'
+
+interface User {
+  id: number
+  name: string
+  timeSpent: number
+  isCheckedIn?: boolean
+  checkInTime?: number
+}
+
+const MEDAL_STYLES = {
+  1: "bg-yellow-100 border-yellow-400",
+  2: "bg-gray-100 border-gray-400",
+  3: "bg-orange-100 border-orange-400"
+};
+
+const MEDAL_ICONS = {
+  1: "🏆",
+  2: "🥈",
+  3: "🥉"
+};
 
 export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
+  const [users, setUsers] = useState<User[]>([
+    { id: 1, name: "John Doe", timeSpent: 4 },
+    { id: 2, name: "Jane Smith", timeSpent: 2 },
+    { id: 3, name: "Alice Johnson", timeSpent: 6 },
+  ])
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
+  const [email, setEmail] = useState('')
+  const [loggedInUser, setLoggedInUser] = useState<User | null>(null)
+
+  // Update time spent for checked-in user
+  useEffect(() => {
+    let intervalId: NodeJS.Timeout;
+
+    if (loggedInUser?.isCheckedIn) {
+      intervalId = setInterval(() => {
+        const now = Date.now();
+        const timeElapsed = Math.floor((now - (loggedInUser.checkInTime || 0)) / 60000); // Convert to minutes
+
+        setUsers(prevUsers =>
+          prevUsers.map(user =>
+            user.id === loggedInUser.id
+              ? { ...user, timeSpent: loggedInUser.timeSpent + timeElapsed }
+              : user
+          )
+        );
+
+        setLoggedInUser(prev => 
+          prev ? { ...prev, timeSpent: prev.timeSpent + timeElapsed } : null
+        );
+      }, 60000); // Update every minute
+    }
+
+    return () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+    };
+  }, [loggedInUser?.isCheckedIn]);
+
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault()
+    const name = email.split('@')[0]
+    const newUser = { id: users.length + 1, name, timeSpent: 0 }
+    setLoggedInUser(newUser)
+    setUsers([...users, newUser])
+    setEmail('')
+  }
+
+  const handleCheckIn = () => {
+    if (loggedInUser) {
+      const now = Date.now();
+      setUsers(users.map(user => 
+        user.id === loggedInUser.id 
+          ? { ...user, isCheckedIn: true, checkInTime: now }
+          : user
+      ))
+      setLoggedInUser({ ...loggedInUser, isCheckedIn: true, checkInTime: now })
+    }
+  }
+
+  const handleCheckOut = () => {
+    if (loggedInUser && loggedInUser.checkInTime) {
+      const now = Date.now();
+      const timeElapsed = Math.floor((now - loggedInUser.checkInTime) / 60000); // Convert to minutes
+      
+      setUsers(users.map(user => 
+        user.id === loggedInUser.id 
+          ? { 
+              ...user, 
+              isCheckedIn: false, 
+              timeSpent: user.timeSpent + timeElapsed,
+              checkInTime: undefined 
+            }
+          : user
+      ))
+      setLoggedInUser({ 
+        ...loggedInUser, 
+        isCheckedIn: false, 
+        timeSpent: loggedInUser.timeSpent + timeElapsed,
+        checkInTime: undefined 
+      })
+    }
+  }
+
+  // Get user's rank
+  const getUserRank = (userId: number) => {
+    const sortedUsers = [...users].sort((a, b) => b.timeSpent - a.timeSpent);
+    return sortedUsers.findIndex(user => user.id === userId) + 1;
+  }
+
+  return (
+    <main className="max-w-4xl mx-auto p-6">
+      <h1 className="text-3xl font-bold mb-8 text-white">Moffit Library Leaderboard</h1>
+      
+      {!loggedInUser ? (
+        <div className="mb-8">
+          <h2 className="text-xl mb-4 text-white">Login with Berkeley Email</h2>
+          <form onSubmit={handleLogin} className="space-y-4">
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="your@berkeley.edu"
+              pattern=".+@berkeley\.edu"
+              required
+              className="w-full max-w-md px-4 py-2 border rounded text-black"
             />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+            <button 
+              type="submit"
+              className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+            >
+              Login
+            </button>
+          </form>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
-  );
+      ) : (
+        <div className="mb-8 p-4 bg-white rounded shadow-lg">
+          <p className="mb-4 text-black">Welcome, {loggedInUser.name}!</p>
+          <p className="mb-4 text-black">
+            Your current rank: {getUserRank(loggedInUser.id)}
+            {getUserRank(loggedInUser.id) > 10 ? ` (${getUserRank(loggedInUser.id)} out of ${users.length})` : ''}
+          </p>
+          {loggedInUser.isCheckedIn ? (
+            <button 
+              onClick={handleCheckOut}
+              className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600"
+            >
+              Check Out
+            </button>
+          ) : (
+            <button 
+              onClick={handleCheckIn}
+              className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600"
+            >
+              Check In
+            </button>
+          )}
+        </div>
+      )}
+
+      <div className="mt-8">
+        <h2 className="text-2xl font-bold mb-4 text-white">Current Rankings</h2>
+        <div className="bg-white rounded-lg overflow-hidden shadow-lg">
+          <table className="min-w-full">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-6 py-3 text-left text-black">Rank</th>
+                <th className="px-6 py-3 text-left text-black">Name</th>
+                <th className="px-6 py-3 text-left text-black">Time (minutes)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {users
+                .sort((a, b) => b.timeSpent - a.timeSpent)
+                .map((user, index) => (
+                  <tr 
+                    key={user.id}
+                    className={`border-t ${loggedInUser?.id === user.id ? 'bg-blue-50' : ''}
+                      ${index < 3 ? `${MEDAL_STYLES[index + 1]} border-l-4` : ''}`}
+                  >
+                    <td className="px-6 py-4 text-black">
+                      {index < 3 ? MEDAL_ICONS[index + 1] : index + 1}
+                    </td>
+                    <td className="px-6 py-4 text-black">{user.name}</td>
+                    <td className="px-6 py-4 text-black">{user.timeSpent}</td>
+                  </tr>
+                ))
+              }
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+  )
 }
