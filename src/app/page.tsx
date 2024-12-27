@@ -1,58 +1,101 @@
-// app/page.tsx
 'use client'
 import { useState, useEffect } from 'react'
+import { createClient } from '@supabase/supabase-js'
+
+// Initialize Supabase client
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
+const supabase = createClient(supabaseUrl, supabaseKey)
 
 interface User {
   id: number
   name: string
+  email: string
   timeSpent: number
   isCheckedIn?: boolean
   checkInTime?: number
 }
 
-const MEDAL_STYLES: { [key: number]: string } = {
-  1: "bg-yellow-100 border-yellow-400",
-  2: "bg-gray-100 border-gray-400",
-  3: "bg-orange-100 border-orange-400"
-} as const;
+const getRankStyle = (index: number): string => {
+  switch(index) {
+    case 0: return "bg-yellow-100";
+    case 1: return "bg-gray-100";
+    case 2: return "bg-orange-100";
+    default: return "";
+  }
+};
 
-const MEDAL_ICONS: { [key: number]: string } = {
-  1: "🏆",
-  2: "🥈",
-  3: "🥉"
-} as const;
+const getRankDisplay = (index: number): string => {
+  switch(index) {
+    case 0: return "1st";
+    case 1: return "2nd";
+    case 2: return "3rd";
+    default: return `${index + 1}th`;
+  }
+};
 
 export default function Home() {
-  const [users, setUsers] = useState<User[]>([
-    { id: 1, name: "John Doe", timeSpent: 4 },
-    { id: 2, name: "Jane Smith", timeSpent: 2 },
-    { id: 3, name: "Alice Johnson", timeSpent: 6 },
-  ])
-
+  const [users, setUsers] = useState<User[]>([])
   const [email, setEmail] = useState('')
   const [loggedInUser, setLoggedInUser] = useState<User | null>(null)
 
-  // Update time spent for checked-in user
+  useEffect(() => {
+    fetchUsers()
+
+    const subscription = supabase
+      .channel('users_channel')
+      .on('postgres_changes', 
+        { 
+          event: '*', 
+          schema: 'public', 
+          table: 'users' 
+        }, 
+        (payload: { new: any; old: any; eventType: string }) => {
+          console.log('Change received!', payload)
+          fetchUsers()
+        }
+      )
+      .subscribe()
+
+    return () => {
+      subscription.unsubscribe()
+    }
+  }, [])
+
+  const fetchUsers = async () => {
+    const { data, error } = await supabase
+      .from('users')
+      .select('*')
+      .order('timeSpent', { ascending: false })
+    
+    if (data) {
+      setUsers(data)
+      if (loggedInUser) {
+        const updatedUser = data.find(u => u.id === loggedInUser.id)
+        if (updatedUser) {
+          setLoggedInUser(updatedUser)
+        }
+      }
+    }
+  }
+
   useEffect(() => {
     let intervalId: NodeJS.Timeout;
 
     if (loggedInUser?.isCheckedIn) {
-      intervalId = setInterval(() => {
+      intervalId = setInterval(async () => {
         const now = Date.now();
-        const timeElapsed = Math.floor((now - (loggedInUser.checkInTime || 0)) / 60000); // Convert to minutes
+        const timeElapsed = Math.floor((now - (loggedInUser.checkInTime || 0)) / 60000);
 
-        setUsers(prevUsers =>
-          prevUsers.map(user =>
-            user.id === loggedInUser.id
-              ? { ...user, timeSpent: loggedInUser.timeSpent + timeElapsed }
-              : user
-          )
-        );
+        const { data, error } = await supabase
+          .from('users')
+          .update({ timeSpent: loggedInUser.timeSpent + timeElapsed })
+          .eq('id', loggedInUser.id)
 
-        setLoggedInUser(prev => 
-          prev ? { ...prev, timeSpent: prev.timeSpent + timeElapsed } : null
-        );
-      }, 60000); // Update every minute
+        if (!error) {
+          fetchUsers()
+        }
+      }, 60000);
     }
 
     return () => {
@@ -62,55 +105,79 @@ export default function Home() {
     };
   }, [loggedInUser?.isCheckedIn]);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
     const name = email.split('@')[0]
-    const newUser = { id: users.length + 1, name, timeSpent: 0 }
-    setLoggedInUser(newUser)
-    setUsers([...users, newUser])
+
+    const { data: existingUser } = await supabase
+      .from('users')
+      .select()
+      .eq('email', email)
+      .single()
+
+    if (existingUser) {
+      setLoggedInUser(existingUser)
+    } else {
+      const { data: newUser, error } = await supabase
+        .from('users')
+        .insert([
+          { name, email, timeSpent: 0 }
+        ])
+        .select()
+        .single()
+
+      if (newUser) {
+        setLoggedInUser(newUser)
+      }
+    }
     setEmail('')
   }
 
-  const handleCheckIn = () => {
+  const handleCheckIn = async () => {
     if (loggedInUser) {
       const now = Date.now();
-      setUsers(users.map(user => 
-        user.id === loggedInUser.id 
-          ? { ...user, isCheckedIn: true, checkInTime: now }
-          : user
-      ))
-      setLoggedInUser({ ...loggedInUser, isCheckedIn: true, checkInTime: now })
+      const { data, error } = await supabase
+        .from('users')
+        .update({ 
+          isCheckedIn: true, 
+          checkInTime: now 
+        })
+        .eq('id', loggedInUser.id)
+        .select()
+        .single()
+
+      if (data) {
+        setLoggedInUser({ ...data, checkInTime: now })
+        fetchUsers()
+      }
     }
   }
 
-  const handleCheckOut = () => {
+  const handleCheckOut = async () => {
     if (loggedInUser && loggedInUser.checkInTime) {
       const now = Date.now();
-      const timeElapsed = Math.floor((now - loggedInUser.checkInTime) / 60000); // Convert to minutes
+      const timeElapsed = Math.floor((now - loggedInUser.checkInTime) / 60000);
       
-      setUsers(users.map(user => 
-        user.id === loggedInUser.id 
-          ? { 
-              ...user, 
-              isCheckedIn: false, 
-              timeSpent: user.timeSpent + timeElapsed,
-              checkInTime: undefined 
-            }
-          : user
-      ))
-      setLoggedInUser({ 
-        ...loggedInUser, 
-        isCheckedIn: false, 
-        timeSpent: loggedInUser.timeSpent + timeElapsed,
-        checkInTime: undefined 
-      })
+      const { data, error } = await supabase
+        .from('users')
+        .update({ 
+          isCheckedIn: false,
+          timeSpent: loggedInUser.timeSpent + timeElapsed,
+          checkInTime: null
+        })
+        .eq('id', loggedInUser.id)
+        .select()
+        .single()
+
+      if (data) {
+        setLoggedInUser(data)
+        fetchUsers()
+      }
     }
   }
 
-  // Get user's rank
   const getUserRank = (userId: number) => {
-    const sortedUsers = [...users].sort((a, b) => b.timeSpent - a.timeSpent);
-    return sortedUsers.findIndex(user => user.id === userId) + 1;
+    return users.findIndex(user => user.id === userId) + 1;
   }
 
   return (
@@ -181,16 +248,15 @@ export default function Home() {
                   <tr 
                     key={user.id}
                     className={`border-t ${loggedInUser?.id === user.id ? 'bg-blue-50' : ''}
-                      ${index < 3 ? `${MEDAL_STYLES[(index + 1) as 1 | 2 | 3]} border-l-4` : ''}`}
+                      ${index < 3 ? getRankStyle(index) : ''}`}
                   >
                     <td className="px-6 py-4 text-black">
-                      {index < 3 ? MEDAL_ICONS[(index + 1) as 1 | 2 | 3] : index + 1}
+                      {getRankDisplay(index)}
                     </td>
                     <td className="px-6 py-4 text-black">{user.name}</td>
                     <td className="px-6 py-4 text-black">{user.timeSpent}</td>
                   </tr>
-                ))
-              }
+                ))}
             </tbody>
           </table>
         </div>
