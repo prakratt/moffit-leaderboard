@@ -38,72 +38,131 @@ export default function Home() {
   const [users, setUsers] = useState<User[]>([])
   const [email, setEmail] = useState('')
   const [loggedInUser, setLoggedInUser] = useState<User | null>(null)
-
-  useEffect(() => {
-    fetchUsers()
-
-    const subscription = supabase
-      .channel('users_channel')
-      .on('postgres_changes', 
-        { 
-          event: '*', 
-          schema: 'public', 
-          table: 'users' 
-        }, 
-        (payload: { new: any; old: any; eventType: string }) => {
-          console.log('Change received!', payload)
-          fetchUsers()
-        }
-      )
-      .subscribe()
-
-    return () => {
-      subscription.unsubscribe()
-    }
-  }, [])
+  const [isLoading, setIsLoading] = useState(true)
 
   const fetchUsers = async () => {
-    const { data, error } = await supabase
-      .from('users')
-      .select('*')
-      .order('timeSpent', { ascending: false })
-    
-    if (data) {
-      setUsers(data)
-      if (loggedInUser) {
-        const updatedUser = data.find(u => u.id === loggedInUser.id)
-        if (updatedUser) {
-          setLoggedInUser(updatedUser)
+    try {
+      const { data, error } = await supabase
+        .from('users')
+        .select('*')
+        .order('timeSpent', { ascending: false })
+      
+      if (error) {
+        console.error('Error fetching users:', error)
+        return
+      }
+      
+      if (data) {
+        setUsers(data)
+        // Update logged in user if exists
+        if (loggedInUser) {
+          const updatedUser = data.find(u => u.id === loggedInUser.id)
+          if (updatedUser) {
+            setLoggedInUser(updatedUser)
+          }
         }
       }
+    } catch (error) {
+      console.error('Error:', error)
+    } finally {
+      setIsLoading(false)
     }
   }
 
   useEffect(() => {
+    // Initial fetch
+    fetchUsers()
+
+    // Set up real-time subscription with specific filters
+    const channel = supabase.channel('users_db_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'users',
+          filter: 'isCheckedIn=eq.true' // Only listen to checked-in users
+        },
+        (payload) => {
+          console.log('Change received:', payload)
+          // Instead of fetching all users, update the specific user
+          if (payload.eventType === 'UPDATE') {
+            setUsers(prevUsers => {
+              const updatedUsers = [...prevUsers]
+              const index = updatedUsers.findIndex(u => u.id === payload.new.id)
+              if (index !== -1) {
+                updatedUsers[index] = payload.new as User
+              } else {
+                updatedUsers.push(payload.new as User)
+              }
+              return updatedUsers.sort((a, b) => b.timeSpent - a.timeSpent)
+            })
+          } else if (payload.eventType === 'INSERT') {
+            setUsers(prevUsers => {
+              return [...prevUsers, payload.new as User]
+                .sort((a, b) => b.timeSpent - a.timeSpent)
+            })
+          } else if (payload.eventType === 'DELETE') {
+            setUsers(prevUsers => 
+              prevUsers.filter(user => user.id !== payload.old.id)
+                .sort((a, b) => b.timeSpent - a.timeSpent)
+            )
+          }
+        }
+      )
+      .subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('Successfully subscribed to real-time changes')
+        }
+      })
+
+    // Cleanup subscription
+    return () => {
+      channel.unsubscribe()
+    }
+  }, []) // Empty dependency array
+
+  // Update time spent for checked-in user
+  useEffect(() => {
     let intervalId: NodeJS.Timeout;
 
     if (loggedInUser?.isCheckedIn) {
-      intervalId = setInterval(async () => {
-        const now = Date.now();
-        const timeElapsed = Math.floor((now - (loggedInUser.checkInTime || 0)) / 60000);
+      const updateTime = async () => {
+        if (!loggedInUser?.isCheckedIn || !loggedInUser?.checkInTime) return
+        
+        const now = Date.now()
+        const timeElapsed = Math.floor((now - loggedInUser.checkInTime) / 60000)
+        const newTimeSpent = loggedInUser.timeSpent + timeElapsed
 
-        const { data, error } = await supabase
+        const { error } = await supabase
           .from('users')
-          .update({ timeSpent: loggedInUser.timeSpent + timeElapsed })
+          .update({ 
+            timeSpent: newTimeSpent,
+            checkInTime: now // Reset check-in time to avoid accumulation errors
+          })
           .eq('id', loggedInUser.id)
 
         if (!error) {
-          fetchUsers()
+          // Update local state immediately
+          setLoggedInUser(prev => prev ? {
+            ...prev,
+            timeSpent: newTimeSpent,
+            checkInTime: now
+          } : null)
         }
-      }, 60000);
+      }
+
+      // Update immediately and then every minute
+      updateTime()
+      intervalId = setInterval(updateTime, 60000)
     }
 
     return () => {
       if (intervalId) {
-        clearInterval(intervalId);
+        clearInterval(intervalId)
       }
-    };
-  }, [loggedInUser?.isCheckedIn]);
+    }
+  }, [loggedInUser?.isCheckedIn])
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -135,7 +194,7 @@ export default function Home() {
 
   const handleCheckIn = async () => {
     if (loggedInUser) {
-      const now = Date.now();
+      const now = Date.now()
       const { data, error } = await supabase
         .from('users')
         .update({ 
@@ -148,15 +207,14 @@ export default function Home() {
 
       if (data) {
         setLoggedInUser({ ...data, checkInTime: now })
-        fetchUsers()
       }
     }
   }
 
   const handleCheckOut = async () => {
     if (loggedInUser && loggedInUser.checkInTime) {
-      const now = Date.now();
-      const timeElapsed = Math.floor((now - loggedInUser.checkInTime) / 60000);
+      const now = Date.now()
+      const timeElapsed = Math.floor((now - loggedInUser.checkInTime) / 60000)
       
       const { data, error } = await supabase
         .from('users')
@@ -171,13 +229,20 @@ export default function Home() {
 
       if (data) {
         setLoggedInUser(data)
-        fetchUsers()
       }
     }
   }
 
   const getUserRank = (userId: number) => {
-    return users.findIndex(user => user.id === userId) + 1;
+    return users.findIndex(user => user.id === userId) + 1
+  }
+
+  if (isLoading) {
+    return (
+      <main className="max-w-4xl mx-auto p-6">
+        <div className="text-white text-center">Loading...</div>
+      </main>
+    )
   }
 
   return (
