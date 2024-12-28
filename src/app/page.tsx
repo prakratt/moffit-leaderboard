@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@supabase/supabase-js'
 
-// Move Supabase initialization into a function
+// Initialize Supabase client
 const getSupabase = () => {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
   const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
@@ -50,6 +50,7 @@ export default function Home() {
   const [loggedInUser, setLoggedInUser] = useState<User | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [lastUpdateTime, setLastUpdateTime] = useState<number>(Date.now())
 
   // Initialize Supabase on component mount
   useEffect(() => {
@@ -64,9 +65,7 @@ export default function Home() {
 
   const fetchUsers = useCallback(async () => {
     if (!supabase) {
-      console.error('Supabase client not initialized')
-      setError('Application not properly initialized')
-      setIsLoading(false)
+      setError('Application not initialized')
       return
     }
 
@@ -77,13 +76,10 @@ export default function Home() {
         .order('timeSpent', { ascending: false })
       
       if (fetchError) {
-        console.error('Error fetching users:', fetchError)
-        setError(`Failed to fetch users: ${fetchError.message}`)
-        return
+        throw fetchError
       }
       
       if (data) {
-        console.log('Fetched users:', data) // Debug log
         setUsers(data)
         if (loggedInUser) {
           const updatedUser = data.find(u => u.id === loggedInUser.id)
@@ -93,8 +89,8 @@ export default function Home() {
         }
       }
     } catch (error) {
-      console.error('Unexpected error:', error)
-      setError('An unexpected error occurred while fetching users')
+      console.error('Error fetching users:', error)
+      setError('Failed to fetch users. Please refresh the page.')
     } finally {
       setIsLoading(false)
     }
@@ -153,45 +149,49 @@ export default function Home() {
     }
   }, [fetchUsers])
 
+  // Update time spent for checked-in user
   useEffect(() => {
-    let intervalId: NodeJS.Timeout;
+    let intervalId: NodeJS.Timeout
 
     const updateTime = async () => {
       if (!supabase || !loggedInUser?.isCheckedIn || !loggedInUser?.checkInTime) return
-      
+
       const now = Date.now()
-      const timeElapsed = Math.floor((now - loggedInUser.checkInTime) / 60000)
-      const newTimeSpent = loggedInUser.timeSpent + timeElapsed
+      const timeSinceLastUpdate = Math.floor((now - lastUpdateTime) / 60000) // Minutes since last update
+
+      if (timeSinceLastUpdate < 1) return // Only update if at least a minute has passed
 
       try {
         const { error: updateError } = await supabase
           .from('users')
           .update({ 
-            timeSpent: newTimeSpent,
-            checkInTime: now // Reset check-in time to avoid accumulation errors
+            timeSpent: loggedInUser.timeSpent + timeSinceLastUpdate
           })
           .eq('id', loggedInUser.id)
 
         if (updateError) {
-          console.error('Error updating time:', updateError)
-          setError(`Failed to update time: ${updateError.message}`)
-          return
+          throw updateError
         }
 
+        // Update local state
         setLoggedInUser(prev => prev ? {
           ...prev,
-          timeSpent: newTimeSpent,
-          checkInTime: now
+          timeSpent: prev.timeSpent + timeSinceLastUpdate
         } : null)
+        
+        setLastUpdateTime(now)
+        
+        // Fetch updated user list
+        fetchUsers()
       } catch (error) {
-        console.error('Error:', error)
-        setError('An unexpected error occurred while updating time')
+        console.error('Error updating time:', error)
+        setError('Failed to update time. Your progress will be saved when connection is restored.')
       }
     }
 
     if (loggedInUser?.isCheckedIn) {
-      updateTime()
-      intervalId = setInterval(updateTime, 60000)
+      intervalId = setInterval(updateTime, 60000) // Check every minute
+      updateTime() // Initial update
     }
 
     return () => {
@@ -199,7 +199,7 @@ export default function Home() {
         clearInterval(intervalId)
       }
     }
-  }, [loggedInUser])
+  }, [loggedInUser, fetchUsers, lastUpdateTime])
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -212,7 +212,7 @@ export default function Home() {
 
     try {
       const name = email.split('@')[0]
-      console.log('Attempting login with:', email) // Debug log
+      console.log('Attempting login with:', email)
 
       const { data: existingUser, error: fetchError } = await supabase
         .from('users')
@@ -227,10 +227,10 @@ export default function Home() {
       }
 
       if (existingUser) {
-        console.log('Existing user found:', existingUser) // Debug log
+        console.log('Existing user found:', existingUser)
         setLoggedInUser(existingUser)
       } else {
-        console.log('Creating new user with name:', name) // Debug log
+        console.log('Creating new user with name:', name)
         const { data: newUser, error: insertError } = await supabase
           .from('users')
           .insert([
@@ -246,7 +246,7 @@ export default function Home() {
         }
 
         if (newUser) {
-          console.log('New user created:', newUser) // Debug log
+          console.log('New user created:', newUser)
           setLoggedInUser(newUser)
         }
       }
@@ -267,24 +267,25 @@ export default function Home() {
         .from('users')
         .update({ 
           isCheckedIn: true, 
-          checkInTime: now 
+          checkInTime: now,
+          timeSpent: loggedInUser.timeSpent // Preserve existing time
         })
         .eq('id', loggedInUser.id)
         .select()
         .single()
 
       if (updateError) {
-        console.error('Error checking in:', updateError)
-        setError(`Failed to check in: ${updateError.message}`)
-        return
+        throw updateError
       }
 
       if (data) {
         setLoggedInUser({ ...data, checkInTime: now })
+        setLastUpdateTime(now)
+        fetchUsers()
       }
     } catch (error) {
-      console.error('Error:', error)
-      setError('An unexpected error occurred while checking in')
+      console.error('Error checking in:', error)
+      setError('Failed to check in. Please try again.')
     }
   }
 
@@ -308,17 +309,16 @@ export default function Home() {
         .single()
 
       if (updateError) {
-        console.error('Error checking out:', updateError)
-        setError(`Failed to check out: ${updateError.message}`)
-        return
+        throw updateError
       }
 
       if (data) {
         setLoggedInUser(data)
+        fetchUsers()
       }
     } catch (error) {
-      console.error('Error:', error)
-      setError('An unexpected error occurred while checking out')
+      console.error('Error checking out:', error)
+      setError('Failed to check out. Please try again.')
     }
   }
 
