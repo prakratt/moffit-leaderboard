@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@supabase/supabase-js'
 
 // Initialize Supabase client
@@ -39,16 +39,18 @@ export default function Home() {
   const [email, setEmail] = useState('')
   const [loggedInUser, setLoggedInUser] = useState<User | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
-  const fetchUsers = async () => {
+  const fetchUsers = useCallback(async () => {
     try {
-      const { data, error } = await supabase
+      const { data, error: fetchError } = await supabase
         .from('users')
         .select('*')
         .order('timeSpent', { ascending: false })
       
-      if (error) {
-        console.error('Error fetching users:', error)
+      if (fetchError) {
+        console.error('Error fetching users:', fetchError)
+        setError('Failed to fetch users')
         return
       }
       
@@ -64,16 +66,17 @@ export default function Home() {
       }
     } catch (error) {
       console.error('Error:', error)
+      setError('An unexpected error occurred')
     } finally {
       setIsLoading(false)
     }
-  }
+  }, [loggedInUser])
 
   useEffect(() => {
     // Initial fetch
     fetchUsers()
 
-    // Set up real-time subscription with specific filters
+    // Set up real-time subscription
     const channel = supabase.channel('users_db_changes')
       .on(
         'postgres_changes',
@@ -81,11 +84,10 @@ export default function Home() {
           event: '*',
           schema: 'public',
           table: 'users',
-          filter: 'isCheckedIn=eq.true' // Only listen to checked-in users
+          filter: 'isCheckedIn=eq.true'
         },
         (payload) => {
           console.log('Change received:', payload)
-          // Instead of fetching all users, update the specific user
           if (payload.eventType === 'UPDATE') {
             setUsers(prevUsers => {
               const updatedUsers = [...prevUsers]
@@ -116,43 +118,48 @@ export default function Home() {
         }
       })
 
-    // Cleanup subscription
     return () => {
       channel.unsubscribe()
     }
-  }, []) // Empty dependency array
+  }, [fetchUsers])
 
-  // Update time spent for checked-in user
   useEffect(() => {
     let intervalId: NodeJS.Timeout;
 
-    if (loggedInUser?.isCheckedIn) {
-      const updateTime = async () => {
-        if (!loggedInUser?.isCheckedIn || !loggedInUser?.checkInTime) return
-        
-        const now = Date.now()
-        const timeElapsed = Math.floor((now - loggedInUser.checkInTime) / 60000)
-        const newTimeSpent = loggedInUser.timeSpent + timeElapsed
+    const updateTime = async () => {
+      if (!loggedInUser?.isCheckedIn || !loggedInUser?.checkInTime) return
+      
+      const now = Date.now()
+      const timeElapsed = Math.floor((now - loggedInUser.checkInTime) / 60000)
+      const newTimeSpent = loggedInUser.timeSpent + timeElapsed
 
-        const { error } = await supabase
+      try {
+        const { error: updateError } = await supabase
           .from('users')
           .update({ 
             timeSpent: newTimeSpent,
-            checkInTime: now // Reset check-in time to avoid accumulation errors
+            checkInTime: now
           })
           .eq('id', loggedInUser.id)
 
-        if (!error) {
-          // Update local state immediately
-          setLoggedInUser(prev => prev ? {
-            ...prev,
-            timeSpent: newTimeSpent,
-            checkInTime: now
-          } : null)
+        if (updateError) {
+          console.error('Error updating time:', updateError)
+          setError('Failed to update time')
+          return
         }
-      }
 
-      // Update immediately and then every minute
+        setLoggedInUser(prev => prev ? {
+          ...prev,
+          timeSpent: newTimeSpent,
+          checkInTime: now
+        } : null)
+      } catch (error) {
+        console.error('Error:', error)
+        setError('An unexpected error occurred')
+      }
+    }
+
+    if (loggedInUser?.isCheckedIn) {
       updateTime()
       intervalId = setInterval(updateTime, 60000)
     }
@@ -162,40 +169,61 @@ export default function Home() {
         clearInterval(intervalId)
       }
     }
-  }, [loggedInUser?.isCheckedIn])
+  }, [loggedInUser])
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
+    setError(null)
     const name = email.split('@')[0]
 
-    const { data: existingUser } = await supabase
-      .from('users')
-      .select()
-      .eq('email', email)
-      .single()
-
-    if (existingUser) {
-      setLoggedInUser(existingUser)
-    } else {
-      const { data: newUser, error } = await supabase
+    try {
+      const { data: existingUser, error: fetchError } = await supabase
         .from('users')
-        .insert([
-          { name, email, timeSpent: 0 }
-        ])
         .select()
+        .eq('email', email)
         .single()
 
-      if (newUser) {
-        setLoggedInUser(newUser)
+      if (fetchError && fetchError.code !== 'PGRST116') {
+        console.error('Error fetching user:', fetchError)
+        setError('Failed to login')
+        return
       }
+
+      if (existingUser) {
+        setLoggedInUser(existingUser)
+      } else {
+        const { data: newUser, error: insertError } = await supabase
+          .from('users')
+          .insert([
+            { name, email, timeSpent: 0 }
+          ])
+          .select()
+          .single()
+
+        if (insertError) {
+          console.error('Error creating user:', insertError)
+          setError('Failed to create account')
+          return
+        }
+
+        if (newUser) {
+          setLoggedInUser(newUser)
+        }
+      }
+      setEmail('')
+    } catch (error) {
+      console.error('Error:', error)
+      setError('An unexpected error occurred')
     }
-    setEmail('')
   }
 
   const handleCheckIn = async () => {
-    if (loggedInUser) {
+    if (!loggedInUser) return
+    setError(null)
+
+    try {
       const now = Date.now()
-      const { data, error } = await supabase
+      const { data, error: updateError } = await supabase
         .from('users')
         .update({ 
           isCheckedIn: true, 
@@ -205,18 +233,30 @@ export default function Home() {
         .select()
         .single()
 
+      if (updateError) {
+        console.error('Error checking in:', updateError)
+        setError('Failed to check in')
+        return
+      }
+
       if (data) {
         setLoggedInUser({ ...data, checkInTime: now })
       }
+    } catch (error) {
+      console.error('Error:', error)
+      setError('An unexpected error occurred')
     }
   }
 
   const handleCheckOut = async () => {
-    if (loggedInUser && loggedInUser.checkInTime) {
+    if (!loggedInUser?.checkInTime) return
+    setError(null)
+
+    try {
       const now = Date.now()
       const timeElapsed = Math.floor((now - loggedInUser.checkInTime) / 60000)
       
-      const { data, error } = await supabase
+      const { data, error: updateError } = await supabase
         .from('users')
         .update({ 
           isCheckedIn: false,
@@ -227,9 +267,18 @@ export default function Home() {
         .select()
         .single()
 
+      if (updateError) {
+        console.error('Error checking out:', updateError)
+        setError('Failed to check out')
+        return
+      }
+
       if (data) {
         setLoggedInUser(data)
       }
+    } catch (error) {
+      console.error('Error:', error)
+      setError('An unexpected error occurred')
     }
   }
 
@@ -248,6 +297,12 @@ export default function Home() {
   return (
     <main className="max-w-4xl mx-auto p-6">
       <h1 className="text-3xl font-bold mb-8 text-white">Moffit Library Leaderboard</h1>
+      
+      {error && (
+        <div className="mb-4 p-4 bg-red-100 text-red-700 rounded">
+          {error}
+        </div>
+      )}
       
       {!loggedInUser ? (
         <div className="mb-8">
