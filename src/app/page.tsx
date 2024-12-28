@@ -2,10 +2,20 @@
 import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@supabase/supabase-js'
 
-// Initialize Supabase client
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
-const supabase = createClient(supabaseUrl, supabaseKey)
+// Move Supabase initialization into a function
+const getSupabase = () => {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  
+  if (!supabaseUrl || !supabaseKey) {
+    throw new Error('Missing Supabase environment variables')
+  }
+  
+  return createClient(supabaseUrl, supabaseKey)
+}
+
+// Initialize Supabase client lazily
+let supabase: ReturnType<typeof getSupabase>
 
 interface User {
   id: number
@@ -41,7 +51,20 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
+  // Initialize Supabase on component mount
+  useEffect(() => {
+    try {
+      supabase = getSupabase()
+    } catch (error) {
+      console.error('Failed to initialize Supabase:', error)
+      setError('Failed to initialize application')
+      setIsLoading(false)
+    }
+  }, [])
+
   const fetchUsers = useCallback(async () => {
+    if (!supabase) return
+
     try {
       const { data, error: fetchError } = await supabase
         .from('users')
@@ -73,6 +96,8 @@ export default function Home() {
   }, [loggedInUser])
 
   useEffect(() => {
+    if (!supabase) return
+
     // Initial fetch
     fetchUsers()
 
