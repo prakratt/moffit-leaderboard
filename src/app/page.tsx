@@ -84,6 +84,8 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null)
 
   const fetchUsers = useCallback(async () => {
+    if (!supabase) return;
+    
     try {
       const { data, error } = await supabase
         .from('users')
@@ -91,9 +93,9 @@ export default function Home() {
         .order('timeSpent', { ascending: false })
 
       if (error) throw error
-      
       setUsers(data || [])
       
+      // Update logged in user data if it exists
       if (loggedInUser) {
         const updatedUser = data?.find(u => u.id === loggedInUser.id)
         if (updatedUser) {
@@ -102,36 +104,63 @@ export default function Home() {
       }
     } catch (error) {
       console.error('Error fetching users:', error)
-      setError('Failed to fetch users')
+      setError('Failed to fetch leaderboard')
     }
   }, [loggedInUser])
 
   const handleUserSession = useCallback(async (authUser: AuthUser) => {
     if (!authUser.email) return;
+    console.log("Handling user session for:", authUser.email);
     
     try {
-      const { data: existingUser, error } = await supabase
+      // First try to get existing user
+      const { data: existingUser, error: fetchError } = await supabase
         .from('users')
-        .select()
+        .select('*')
         .eq('email', authUser.email)
         .single()
 
-      if (error) throw error
-
-      if (existingUser) {
+      if (!fetchError && existingUser) {
+        console.log("Found existing user:", existingUser);
         setLoggedInUser(existingUser)
-        await fetchUsers()
+        return
+      }
+
+      console.log("Creating new user");
+      // If user doesn't exist, create new user
+      const { data: newUser, error: createError } = await supabase
+        .from('users')
+        .insert([{ 
+          email: authUser.email,
+          name: authUser.email.split('@')[0],
+          timeSpent: 0,
+          isCheckedIn: false
+        }])
+        .select()
+        .single()
+
+      if (createError) {
+        console.error("Error creating user:", createError);
+        throw createError;
+      }
+
+      if (newUser) {
+        console.log("Created new user:", newUser);
+        setLoggedInUser(newUser)
       }
     } catch (error) {
       console.error('Error handling user session:', error)
       setError('Failed to load user data')
     }
-  }, [fetchUsers])
+  }, [])
 
   useEffect(() => {
     try {
       supabase = getSupabase()
       
+      // Start fetching leaderboard data immediately
+      fetchUsers()
+
       supabase.auth.getSession().then(({ data: { session } }) => {
         if (session?.user?.email) {
           handleUserSession({
@@ -163,10 +192,9 @@ export default function Home() {
       setError('Failed to initialize application')
       setIsLoading(false)
     }
-  }, [handleUserSession])
+  }, [handleUserSession, fetchUsers])
 
   useEffect(() => {
-    fetchUsers()
     const intervalId = setInterval(fetchUsers, 5000)
     return () => clearInterval(intervalId)
   }, [fetchUsers])
@@ -245,12 +273,12 @@ export default function Home() {
       setError('Application not properly initialized')
       return
     }
-  
+
     if (!email.endsWith('@berkeley.edu')) {
       setError('Please use a valid Berkeley email address')
       return
     }
-  
+
     try {
       const { error: signInError } = await supabase.auth.signInWithOtp({
         email,
@@ -258,9 +286,9 @@ export default function Home() {
           emailRedirectTo: 'https://moffit-leaderboard.vercel.app/auth/callback',
         },
       })
-  
+
       if (signInError) throw signInError
-  
+
       setError('Check your email for the login link!')
       setEmail('')
     } catch (error) {
@@ -308,113 +336,117 @@ export default function Home() {
         </Alert>
       )}
       
-      {!loggedInUser ? (
+      <div className="grid gap-6 md:grid-cols-2">
+        {/* Leaderboard Card - Always visible */}
         <Card>
           <CardHeader>
-            <CardTitle>Login with Berkeley Email</CardTitle>
-            <CardDescription>
-              We&apos;ll send you a magic link to verify your email
-            </CardDescription>
+            <CardTitle>Current Rankings</CardTitle>
+            <CardDescription>Top students by study time</CardDescription>
           </CardHeader>
           <CardContent>
-            <form onSubmit={handleLogin} className="space-y-4">
-              <Input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="your@berkeley.edu"
-                pattern=".+@berkeley\.edu"
-                required
-              />
-              <Button type="submit">
-                Send Magic Link
-              </Button>
-            </form>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Rank</TableHead>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Time (min)</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {users
+                  .sort((a, b) => b.timeSpent - a.timeSpent)
+                  .map((user, index) => (
+                    <TableRow
+                      key={user.id}
+                      className={`${
+                        loggedInUser?.id === user.id 
+                          ? 'bg-blue-50 dark:bg-blue-900/20' 
+                          : ''
+                      } ${index < 3 ? getRankStyle(index) : ''}`}
+                    >
+                      <TableCell className="font-medium">
+                        {getRankDisplay(index)}
+                      </TableCell>
+                      <TableCell>{user.name}</TableCell>
+                      <TableCell>{user.timeSpent}</TableCell>
+                    </TableRow>
+                  ))}
+              </TableBody>
+            </Table>
           </CardContent>
         </Card>
-      ) : (
-        <div className="grid gap-6 md:grid-cols-2">
-          <Card>
-            <CardHeader>
-              <CardTitle>Welcome, {loggedInUser.name}!</CardTitle>
-              <CardDescription>
-                Rank #{getUserRank(loggedInUser.id, users)}
-                {getUserRank(loggedInUser.id, users) > 10 ? 
-                  ` (out of ${users.length})` : 
-                  ''}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex items-center gap-4">
-                <Clock className="h-4 w-4 text-muted-foreground" />
-                <span>Total time: {loggedInUser.timeSpent} minutes</span>
-              </div>
-              <div className="flex gap-2">
-                {loggedInUser.isCheckedIn ? (
-                  <Button 
-                    variant="destructive"
-                    onClick={handleCheckOut}
-                  >
-                    Check Out
-                  </Button>
-                ) : (
-                  <Button 
-                    variant="default"
-                    onClick={handleCheckIn}
-                  >
-                    Check In
-                  </Button>
-                )}
-                <Button 
-                  variant="outline" 
-                  onClick={handleSignOut}
-                >
-                  <LogOut className="h-4 w-4 mr-2" />
-                  Sign Out
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Current Rankings</CardTitle>
-              <CardDescription>Top students by study time</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Rank</TableHead>
-                    <TableHead>Name</TableHead>
-                    <TableHead>Time (min)</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {users
-                    .sort((a, b) => b.timeSpent - a.timeSpent)
-                    .map((user, index) => (
-                      <TableRow
-                        key={user.id}
-                        className={`${
-                          loggedInUser?.id === user.id 
-                            ? 'bg-blue-50 dark:bg-blue-900/20' 
-                            : ''
-                        } ${index < 3 ? getRankStyle(index) : ''}`}
-                      >
-                        <TableCell className="font-medium">
-                          {getRankDisplay(index)}
-                        </TableCell>
-                        <TableCell>{user.name}</TableCell>
-                        <TableCell>{user.timeSpent}</TableCell>
-                      </TableRow>
-                    ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-        </div>
-      )}
+        {/* Login/User Card */}
+        <Card>
+          {!loggedInUser ? (
+            <>
+              <CardHeader>
+                <CardTitle>Login to Track Time</CardTitle>
+                <CardDescription>
+                  Sign in with your Berkeley email to start tracking your study time
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <form onSubmit={handleLogin} className="space-y-4">
+                  <Input
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="your@berkeley.edu"
+                    pattern=".+@berkeley\.edu"
+                    required
+                  />
+                  <Button type="submit">
+                    Send Magic Link
+                  </Button>
+                </form>
+              </CardContent>
+            </>
+          ) : (
+            <>
+              <CardHeader>
+                <CardTitle>Welcome, {loggedInUser.name}!</CardTitle>
+                <CardDescription>
+                  Rank #{getUserRank(loggedInUser.id, users)}
+                  {getUserRank(loggedInUser.id, users) > 10 ? 
+                    ` (out of ${users.length})` : 
+                    ''}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex items-center gap-4">
+                  <Clock className="h-4 w-4 text-muted-foreground" />
+                  <span>Total time: {loggedInUser.timeSpent} minutes</span>
+                </div>
+                <div className="flex gap-2">
+                  {loggedInUser.isCheckedIn ? (
+                    <Button 
+                      variant="destructive"
+                      onClick={handleCheckOut}
+                    >
+                      Check Out
+                    </Button>
+                  ) : (
+                    <Button 
+                      variant="default"
+                      onClick={handleCheckIn}
+                    >
+                      Check In
+                    </Button>
+                  )}
+                  <Button 
+                    variant="outline" 
+                    onClick={handleSignOut}
+                  >
+                    <LogOut className="h-4 w-4 mr-2" />
+                    Sign Out
+                  </Button>
+                </div>
+              </CardContent>
+            </>
+          )}
+        </Card>
+      </div>
     </main>
   )
 }
