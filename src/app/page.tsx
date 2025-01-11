@@ -41,14 +41,14 @@ interface User {
   checkInTime?: number | null
 }
 
+interface UserMetadata {
+  [key: string]: string | number | boolean | null
+}
+
 interface AuthUser {
   id: string
   email: string | undefined
-  user_metadata?: any
-}
-
-interface Session {
-  user: AuthUser
+  user_metadata?: UserMetadata
 }
 
 const getRankStyle = (index: number): string => {
@@ -82,6 +82,51 @@ export default function Home() {
   const [loggedInUser, setLoggedInUser] = useState<User | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  const fetchUsers = useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from('users')
+        .select('*')
+        .order('timeSpent', { ascending: false })
+
+      if (error) throw error
+      
+      setUsers(data || [])
+      
+      if (loggedInUser) {
+        const updatedUser = data?.find(u => u.id === loggedInUser.id)
+        if (updatedUser) {
+          setLoggedInUser(updatedUser)
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching users:', error)
+      setError('Failed to fetch users')
+    }
+  }, [loggedInUser])
+
+  const handleUserSession = useCallback(async (authUser: AuthUser) => {
+    if (!authUser.email) return;
+    
+    try {
+      const { data: existingUser, error } = await supabase
+        .from('users')
+        .select()
+        .eq('email', authUser.email)
+        .single()
+
+      if (error) throw error
+
+      if (existingUser) {
+        setLoggedInUser(existingUser)
+        await fetchUsers()
+      }
+    } catch (error) {
+      console.error('Error handling user session:', error)
+      setError('Failed to load user data')
+    }
+  }, [fetchUsers])
 
   useEffect(() => {
     try {
@@ -118,53 +163,7 @@ export default function Home() {
       setError('Failed to initialize application')
       setIsLoading(false)
     }
-  }, [])
-
-  const handleUserSession = async (authUser: AuthUser) => {
-    if (!authUser.email) return;
-    
-    try {
-      const { data: existingUser, error } = await supabase
-        .from('users')
-        .select()
-        .eq('email', authUser.email)
-        .single()
-
-      if (error) throw error
-
-      if (existingUser) {
-        setLoggedInUser(existingUser)
-        await fetchUsers()
-      }
-    } catch (error) {
-      console.error('Error handling user session:', error)
-      setError('Failed to load user data')
-    }
-  }
-
-  const fetchUsers = useCallback(async () => {
-    try {
-      const { data, error } = await supabase
-        .from('users')
-        .select('*')
-        .order('timeSpent', { ascending: false })
-
-      if (error) throw error
-      
-      setUsers(data || [])
-      
-      // Update logged in user if exists
-      if (loggedInUser) {
-        const updatedUser = data?.find(u => u.id === loggedInUser.id)
-        if (updatedUser) {
-          setLoggedInUser(updatedUser)
-        }
-      }
-    } catch (error) {
-      console.error('Error fetching users:', error)
-      setError('Failed to fetch users')
-    }
-  }, [loggedInUser])
+  }, [handleUserSession])
 
   useEffect(() => {
     fetchUsers()
