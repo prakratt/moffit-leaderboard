@@ -245,22 +245,22 @@ export default function Home() {
       setError('Application not properly initialized')
       return
     }
-
+  
     if (!email.endsWith('@berkeley.edu')) {
       setError('Please use a valid Berkeley email address')
       return
     }
-
+  
     try {
       const { error: signInError } = await supabase.auth.signInWithOtp({
         email,
         options: {
-          emailRedirectTo: `${window.location.origin}/auth/callback`,
+          emailRedirectTo: 'https://moffit-leaderboard.vercel.app/auth/callback',
         },
       })
-
+  
       if (signInError) throw signInError
-
+  
       setError('Check your email for the login link!')
       setEmail('')
     } catch (error) {
