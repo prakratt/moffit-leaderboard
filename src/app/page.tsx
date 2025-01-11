@@ -1,6 +1,22 @@
 'use client'
+
 import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@supabase/supabase-js'
+import { useRouter } from 'next/navigation'
+import { Clock, LogOut, Trophy } from 'lucide-react'
+
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
 
 // Initialize Supabase client
 const getSupabase = () => {
@@ -14,7 +30,6 @@ const getSupabase = () => {
   return createClient(supabaseUrl, supabaseKey)
 }
 
-// Initialize Supabase client lazily
 let supabase: ReturnType<typeof getSupabase>
 
 interface User {
@@ -28,23 +43,30 @@ interface User {
 
 const getRankStyle = (index: number): string => {
   switch(index) {
-    case 0: return "bg-yellow-100";
-    case 1: return "bg-gray-100";
-    case 2: return "bg-orange-100";
-    default: return "";
+    case 0: return "bg-yellow-50 dark:bg-yellow-900/20"
+    case 1: return "bg-zinc-50 dark:bg-zinc-900/20"
+    case 2: return "bg-orange-50 dark:bg-orange-900/20"
+    default: return ""
   }
-};
+}
 
 const getRankDisplay = (index: number): string => {
   switch(index) {
-    case 0: return "1st";
-    case 1: return "2nd";
-    case 2: return "3rd";
-    default: return `${index + 1}th`;
+    case 0: return "1st"
+    case 1: return "2nd"
+    case 2: return "3rd"
+    default: return `${index + 1}th`
   }
-};
+}
+
+const getUserRank = (userId: number, usersList: User[]): number => {
+  const sortedUsers = [...usersList].sort((a, b) => b.timeSpent - a.timeSpent)
+  const index = sortedUsers.findIndex(user => user.id === userId)
+  return index === -1 ? usersList.length : index + 1
+}
 
 export default function Home() {
+  const router = useRouter()
   const [users, setUsers] = useState<User[]>([])
   const [email, setEmail] = useState('')
   const [loggedInUser, setLoggedInUser] = useState<User | null>(null)
@@ -52,10 +74,31 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null)
   const [lastUpdateTime, setLastUpdateTime] = useState<number>(Date.now())
 
-  // Initialize Supabase on component mount
+  // Initialize Supabase and check session on mount
   useEffect(() => {
     try {
       supabase = getSupabase()
+      
+      // Check for existing session
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        if (session?.user) {
+          handleUserSession(session.user)
+        }
+        setIsLoading(false)
+      })
+
+      // Listen for auth changes
+      const {
+        data: { subscription },
+      } = supabase.auth.onAuthStateChange((_event, session) => {
+        if (session?.user) {
+          handleUserSession(session.user)
+        } else {
+          setLoggedInUser(null)
+        }
+      })
+
+      return () => subscription.unsubscribe()
     } catch (error) {
       console.error('Failed to initialize Supabase:', error)
       setError('Failed to initialize application')
@@ -63,199 +106,43 @@ export default function Home() {
     }
   }, [])
 
-  const fetchUsers = useCallback(async () => {
-    if (!supabase) {
-      setError('Application not initialized')
-      return
-    }
+  const handleUserSession = async (authUser: any) => {
+    const { data: existingUser } = await supabase
+      .from('users')
+      .select()
+      .eq('email', authUser.email)
+      .single()
 
+    if (existingUser) {
+      setLoggedInUser(existingUser)
+    }
+  }
+
+  const fetchUsers = useCallback(async () => {
     try {
-      const { data, error: fetchError } = await supabase
+      const { data, error } = await supabase
         .from('users')
         .select('*')
-        .order('timeSpent', { ascending: false })
-      
-      if (fetchError) {
-        throw fetchError
-      }
-      
-      if (data) {
-        setUsers(data)
-        if (loggedInUser) {
-          const updatedUser = data.find(u => u.id === loggedInUser.id)
-          if (updatedUser) {
-            setLoggedInUser(updatedUser)
-          }
-        }
+
+      if (error) {
+        console.error('Error fetching users:', error)
+        setError('Failed to fetch users')
+      } else {
+        setUsers(data || [])
       }
     } catch (error) {
       console.error('Error fetching users:', error)
-      setError('Failed to fetch users. Please refresh the page.')
-    } finally {
-      setIsLoading(false)
+      setError('Failed to fetch users')
     }
-  }, [loggedInUser])
+  }, [supabase])
 
   useEffect(() => {
-    if (!supabase) return
+    const intervalId = setInterval(async () => {
+      await fetchUsers()
+    }, 5000) // Update every 5 seconds
 
-    // Initial fetch
-    fetchUsers()
-
-    // Set up real-time subscription
-    const channel = supabase.channel('users_db_changes')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'users',
-          filter: 'isCheckedIn=eq.true'
-        },
-        (payload) => {
-          console.log('Change received:', payload)
-          if (payload.eventType === 'UPDATE') {
-            setUsers(prevUsers => {
-              const updatedUsers = [...prevUsers]
-              const index = updatedUsers.findIndex(u => u.id === payload.new.id)
-              if (index !== -1) {
-                updatedUsers[index] = payload.new as User
-              } else {
-                updatedUsers.push(payload.new as User)
-              }
-              return updatedUsers.sort((a, b) => b.timeSpent - a.timeSpent)
-            })
-          } else if (payload.eventType === 'INSERT') {
-            setUsers(prevUsers => {
-              return [...prevUsers, payload.new as User]
-                .sort((a, b) => b.timeSpent - a.timeSpent)
-            })
-          } else if (payload.eventType === 'DELETE') {
-            setUsers(prevUsers => 
-              prevUsers.filter(user => user.id !== payload.old.id)
-                .sort((a, b) => b.timeSpent - a.timeSpent)
-            )
-          }
-        }
-      )
-      .subscribe(async (status) => {
-        if (status === 'SUBSCRIBED') {
-          console.log('Successfully subscribed to real-time changes')
-        }
-      })
-
-    return () => {
-      channel.unsubscribe()
-    }
+    return () => clearInterval(intervalId)
   }, [fetchUsers])
-
-  // Update time spent for checked-in user
-  useEffect(() => {
-    let intervalId: NodeJS.Timeout
-
-    const updateTime = async () => {
-      if (!supabase || !loggedInUser?.isCheckedIn || !loggedInUser?.checkInTime) return
-
-      const now = Date.now()
-      const timeSinceLastUpdate = Math.floor((now - lastUpdateTime) / 60000) // Minutes since last update
-
-      if (timeSinceLastUpdate < 1) return // Only update if at least a minute has passed
-
-      try {
-        const { error: updateError } = await supabase
-          .from('users')
-          .update({ 
-            timeSpent: loggedInUser.timeSpent + timeSinceLastUpdate
-          })
-          .eq('id', loggedInUser.id)
-
-        if (updateError) {
-          throw updateError
-        }
-
-        // Update local state
-        setLoggedInUser(prev => prev ? {
-          ...prev,
-          timeSpent: prev.timeSpent + timeSinceLastUpdate
-        } : null)
-        
-        setLastUpdateTime(now)
-        
-        // Fetch updated user list
-        fetchUsers()
-      } catch (error) {
-        console.error('Error updating time:', error)
-        setError('Failed to update time. Your progress will be saved when connection is restored.')
-      }
-    }
-
-    if (loggedInUser?.isCheckedIn) {
-      intervalId = setInterval(updateTime, 60000) // Check every minute
-      updateTime() // Initial update
-    }
-
-    return () => {
-      if (intervalId) {
-        clearInterval(intervalId)
-      }
-    }
-  }, [loggedInUser, fetchUsers, lastUpdateTime])
-
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setError(null)
-    
-    if (!supabase) {
-      setError('Application not properly initialized')
-      return
-    }
-
-    try {
-      const name = email.split('@')[0]
-      console.log('Attempting login with:', email)
-
-      const { data: existingUser, error: fetchError } = await supabase
-        .from('users')
-        .select()
-        .eq('email', email)
-        .single()
-
-      if (fetchError && fetchError.code !== 'PGRST116') {
-        console.error('Error fetching user:', fetchError)
-        setError(`Login failed: ${fetchError.message}`)
-        return
-      }
-
-      if (existingUser) {
-        console.log('Existing user found:', existingUser)
-        setLoggedInUser(existingUser)
-      } else {
-        console.log('Creating new user with name:', name)
-        const { data: newUser, error: insertError } = await supabase
-          .from('users')
-          .insert([
-            { name, email, timeSpent: 0 }
-          ])
-          .select()
-          .single()
-
-        if (insertError) {
-          console.error('Error creating user:', insertError)
-          setError(`Failed to create account: ${insertError.message}`)
-          return
-        }
-
-        if (newUser) {
-          console.log('New user created:', newUser)
-          setLoggedInUser(newUser)
-        }
-      }
-      setEmail('')
-    } catch (error) {
-      console.error('Unexpected error:', error)
-      setError('An unexpected error occurred during login')
-    }
-  }
 
   const handleCheckIn = async () => {
     if (!supabase || !loggedInUser) return
@@ -274,14 +161,12 @@ export default function Home() {
         .select()
         .single()
 
-      if (updateError) {
-        throw updateError
-      }
+      if (updateError) throw updateError
 
       if (data) {
-        setLoggedInUser({ ...data, checkInTime: now })
+        setLoggedInUser(prev => ({ ...prev!, checkInTime: now, isCheckedIn: true }))
         setLastUpdateTime(now)
-        fetchUsers()
+        await fetchUsers() // Refresh the leaderboard
       }
     } catch (error) {
       console.error('Error checking in:', error)
@@ -295,26 +180,30 @@ export default function Home() {
 
     try {
       const now = Date.now()
-      const timeElapsed = Math.floor((now - loggedInUser.checkInTime) / 60000)
+      const timeElapsed = Math.floor((now - loggedInUser.checkInTime) / 60000) // Convert to minutes
+      const newTotalTime = loggedInUser.timeSpent + timeElapsed
       
       const { data, error: updateError } = await supabase
         .from('users')
         .update({ 
           isCheckedIn: false,
-          timeSpent: loggedInUser.timeSpent + timeElapsed,
-          checkInTime: null
+          timeSpent: newTotalTime,
+          checkInTime: undefined // Updated line
         })
         .eq('id', loggedInUser.id)
         .select()
         .single()
 
-      if (updateError) {
-        throw updateError
-      }
+      if (updateError) throw updateError
 
       if (data) {
-        setLoggedInUser(data)
-        fetchUsers()
+        setLoggedInUser({
+          ...loggedInUser,
+          isCheckedIn: false,
+          timeSpent: newTotalTime,
+          checkInTime: undefined
+        })
+        await fetchUsers() // Refresh the leaderboard
       }
     } catch (error) {
       console.error('Error checking out:', error)
@@ -322,105 +211,183 @@ export default function Home() {
     }
   }
 
-  const getUserRank = (userId: number) => {
-    return users.findIndex(user => user.id === userId) + 1
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError(null)
+    
+    if (!supabase) {
+      setError('Application not properly initialized')
+      return
+    }
+
+    if (!email.endsWith('@berkeley.edu')) {
+      setError('Please use a valid Berkeley email address')
+      return
+    }
+
+    try {
+      const { data, error: signInError } = await supabase.auth.signInWithOtp({
+        email,
+        options: {
+          emailRedirectTo: `${window.location.origin}/auth/callback`,
+        },
+      })
+
+      if (signInError) throw signInError
+
+      setError('Check your email for the login link!')
+    } catch (error) {
+      console.error('Error during login:', error)
+      setError('Failed to send login link. Please try again.')
+    }
+  }
+
+  const handleSignOut = async () => {
+    if (!supabase) return
+    
+    try {
+      await supabase.auth.signOut()
+      setLoggedInUser(null)
+      router.refresh()
+    } catch (error) {
+      console.error('Error signing out:', error)
+    }
   }
 
   if (isLoading) {
     return (
-      <main className="max-w-4xl mx-auto p-6">
-        <div className="text-white text-center">Loading...</div>
-      </main>
+      <div className="flex min-h-screen items-center justify-center">
+        <div className="animate-pulse text-muted-foreground">Loading...</div>
+      </div>
     )
   }
 
   return (
-    <main className="max-w-4xl mx-auto p-6">
-      <h1 className="text-3xl font-bold mb-8 text-white">Moffit Library Leaderboard</h1>
+    <main className="container mx-auto p-6 max-w-5xl">
+      <Card className="mb-8">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Trophy className="h-6 w-6" />
+            MoffittBoard
+          </CardTitle>
+          <CardDescription>Track your study time at Moffitt Library</CardDescription>
+        </CardHeader>
+      </Card>
       
       {error && (
-        <div className="mb-4 p-4 bg-red-100 text-red-700 rounded">
-          {error}
-        </div>
+        <Alert variant="destructive" className="mb-6">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
       )}
       
       {!loggedInUser ? (
-        <div className="mb-8">
-          <h2 className="text-xl mb-4 text-white">Login with Berkeley Email</h2>
-          <form onSubmit={handleLogin} className="space-y-4">
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="your@berkeley.edu"
-              pattern=".+@berkeley\.edu"
-              required
-              className="w-full max-w-md px-4 py-2 border rounded text-black"
-            />
-            <button 
-              type="submit"
-              className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
-            >
-              Login
-            </button>
-          </form>
-        </div>
+        <Card>
+          <CardHeader>
+            <CardTitle>Login with Berkeley Email</CardTitle>
+            <CardDescription>
+              We'll send you a magic link to verify your email
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleLogin} className="space-y-4">
+              <Input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="your@berkeley.edu"
+                pattern=".+@berkeley\.edu"
+                required
+              />
+              <Button type="submit">
+                Send Magic Link
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
       ) : (
-        <div className="mb-8 p-4 bg-white rounded shadow-lg">
-          <p className="mb-4 text-black">Welcome, {loggedInUser.name}!</p>
-          <p className="mb-4 text-black">
-            Your current rank: {getUserRank(loggedInUser.id)}
-            {getUserRank(loggedInUser.id) > 10 ? ` (${getUserRank(loggedInUser.id)} out of ${users.length})` : ''}
-          </p>
-          {loggedInUser.isCheckedIn ? (
-            <button 
-              onClick={handleCheckOut}
-              className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600"
-            >
-              Check Out
-            </button>
-          ) : (
-            <button 
-              onClick={handleCheckIn}
-              className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600"
-            >
-              Check In
-            </button>
-          )}
+        <div className="grid gap-6 md:grid-cols-2">
+          <Card>
+            <CardHeader>
+              <CardTitle>Welcome, {loggedInUser.name}!</CardTitle>
+              <CardDescription>
+                Rank #{getUserRank(loggedInUser.id, users)}
+                {getUserRank(loggedInUser.id, users) > 10 ? 
+                  ` (out of ${users.length})` : 
+                  ''}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center gap-4">
+                <Clock className="h-4 w-4 text-muted-foreground" />
+                <span>Total time: {loggedInUser.timeSpent} minutes</span>
+              </div>
+              <div className="flex gap-2">
+                {loggedInUser.isCheckedIn ? (
+                  <Button 
+                    variant="destructive"
+                    onClick={handleCheckOut}
+                  >
+                    Check Out
+                  </Button>
+                ) : (
+                  <Button 
+                    variant="default"
+                    onClick={handleCheckIn}
+                  >
+                    Check In
+                  </Button>
+                )}
+                <Button 
+                  variant="outline" 
+                  onClick={handleSignOut}
+                >
+                  <LogOut className="h-4 w-4 mr-2" />
+                  Sign Out
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Current Rankings</CardTitle>
+              <CardDescription>Top students by study time</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Rank</TableHead>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Time (min)</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {users
+                    .sort((a, b) => b.timeSpent - a.timeSpent)
+                    .map((user, index) => (
+                      <TableRow
+                        key={user.id}
+                        className={`${
+                          loggedInUser?.id === user.id 
+                            ? 'bg-blue-50 dark:bg-blue-900/20' 
+                            : ''
+                        } ${index < 3 ? getRankStyle(index) : ''}`}
+                      >
+                        <TableCell className="font-medium">
+                          {getRankDisplay(index)}
+                        </TableCell>
+                        <TableCell>{user.name}</TableCell>
+                        <TableCell>{user.timeSpent}</TableCell>
+                      </TableRow>
+                    ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
         </div>
       )}
-
-      <div className="mt-8">
-        <h2 className="text-2xl font-bold mb-4 text-white">Current Rankings</h2>
-        <div className="bg-white rounded-lg overflow-hidden shadow-lg">
-          <table className="min-w-full">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-black">Rank</th>
-                <th className="px-6 py-3 text-left text-black">Name</th>
-                <th className="px-6 py-3 text-left text-black">Time (minutes)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {users
-                .sort((a, b) => b.timeSpent - a.timeSpent)
-                .map((user, index) => (
-                  <tr 
-                    key={user.id}
-                    className={`border-t ${loggedInUser?.id === user.id ? 'bg-blue-50' : ''}
-                      ${index < 3 ? getRankStyle(index) : ''}`}
-                  >
-                    <td className="px-6 py-4 text-black">
-                      {getRankDisplay(index)}
-                    </td>
-                    <td className="px-6 py-4 text-black">{user.name}</td>
-                    <td className="px-6 py-4 text-black">{user.timeSpent}</td>
-                  </tr>
-                ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
     </main>
   )
 }
+
