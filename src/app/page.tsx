@@ -38,7 +38,17 @@ interface User {
   email: string
   timeSpent: number
   isCheckedIn?: boolean
-  checkInTime?: number
+  checkInTime?: number | null
+}
+
+interface AuthUser {
+  id: string
+  email: string | undefined
+  user_metadata?: any
+}
+
+interface Session {
+  user: AuthUser
 }
 
 const getRankStyle = (index: number): string => {
@@ -72,27 +82,31 @@ export default function Home() {
   const [loggedInUser, setLoggedInUser] = useState<User | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [lastUpdateTime, setLastUpdateTime] = useState<number>(Date.now())
 
-  // Initialize Supabase and check session on mount
   useEffect(() => {
     try {
       supabase = getSupabase()
       
-      // Check for existing session
       supabase.auth.getSession().then(({ data: { session } }) => {
-        if (session?.user) {
-          handleUserSession(session.user)
+        if (session?.user?.email) {
+          handleUserSession({
+            id: session.user.id,
+            email: session.user.email,
+            user_metadata: session.user.user_metadata
+          })
         }
         setIsLoading(false)
       })
 
-      // Listen for auth changes
       const {
         data: { subscription },
       } = supabase.auth.onAuthStateChange((_event, session) => {
-        if (session?.user) {
-          handleUserSession(session.user)
+        if (session?.user?.email) {
+          handleUserSession({
+            id: session.user.id,
+            email: session.user.email,
+            user_metadata: session.user.user_metadata
+          })
         } else {
           setLoggedInUser(null)
         }
@@ -106,15 +120,25 @@ export default function Home() {
     }
   }, [])
 
-  const handleUserSession = async (authUser: any) => {
-    const { data: existingUser } = await supabase
-      .from('users')
-      .select()
-      .eq('email', authUser.email)
-      .single()
+  const handleUserSession = async (authUser: AuthUser) => {
+    if (!authUser.email) return;
+    
+    try {
+      const { data: existingUser, error } = await supabase
+        .from('users')
+        .select()
+        .eq('email', authUser.email)
+        .single()
 
-    if (existingUser) {
-      setLoggedInUser(existingUser)
+      if (error) throw error
+
+      if (existingUser) {
+        setLoggedInUser(existingUser)
+        await fetchUsers()
+      }
+    } catch (error) {
+      console.error('Error handling user session:', error)
+      setError('Failed to load user data')
     }
   }
 
@@ -123,24 +147,28 @@ export default function Home() {
       const { data, error } = await supabase
         .from('users')
         .select('*')
+        .order('timeSpent', { ascending: false })
 
-      if (error) {
-        console.error('Error fetching users:', error)
-        setError('Failed to fetch users')
-      } else {
-        setUsers(data || [])
+      if (error) throw error
+      
+      setUsers(data || [])
+      
+      // Update logged in user if exists
+      if (loggedInUser) {
+        const updatedUser = data?.find(u => u.id === loggedInUser.id)
+        if (updatedUser) {
+          setLoggedInUser(updatedUser)
+        }
       }
     } catch (error) {
       console.error('Error fetching users:', error)
       setError('Failed to fetch users')
     }
-  }, [supabase])
+  }, [loggedInUser])
 
   useEffect(() => {
-    const intervalId = setInterval(async () => {
-      await fetchUsers()
-    }, 5000) // Update every 5 seconds
-
+    fetchUsers()
+    const intervalId = setInterval(fetchUsers, 5000)
     return () => clearInterval(intervalId)
   }, [fetchUsers])
 
@@ -155,7 +183,7 @@ export default function Home() {
         .update({ 
           isCheckedIn: true, 
           checkInTime: now,
-          timeSpent: loggedInUser.timeSpent // Preserve existing time
+          timeSpent: loggedInUser.timeSpent
         })
         .eq('id', loggedInUser.id)
         .select()
@@ -164,9 +192,8 @@ export default function Home() {
       if (updateError) throw updateError
 
       if (data) {
-        setLoggedInUser(prev => ({ ...prev!, checkInTime: now, isCheckedIn: true }))
-        setLastUpdateTime(now)
-        await fetchUsers() // Refresh the leaderboard
+        setLoggedInUser({ ...data, checkInTime: now, isCheckedIn: true })
+        await fetchUsers()
       }
     } catch (error) {
       console.error('Error checking in:', error)
@@ -180,7 +207,7 @@ export default function Home() {
 
     try {
       const now = Date.now()
-      const timeElapsed = Math.floor((now - loggedInUser.checkInTime) / 60000) // Convert to minutes
+      const timeElapsed = Math.floor((now - loggedInUser.checkInTime) / 60000)
       const newTotalTime = loggedInUser.timeSpent + timeElapsed
       
       const { data, error: updateError } = await supabase
@@ -188,7 +215,7 @@ export default function Home() {
         .update({ 
           isCheckedIn: false,
           timeSpent: newTotalTime,
-          checkInTime: undefined // Updated line
+          checkInTime: null
         })
         .eq('id', loggedInUser.id)
         .select()
@@ -198,12 +225,12 @@ export default function Home() {
 
       if (data) {
         setLoggedInUser({
-          ...loggedInUser,
+          ...data,
           isCheckedIn: false,
           timeSpent: newTotalTime,
-          checkInTime: undefined
+          checkInTime: null
         })
-        await fetchUsers() // Refresh the leaderboard
+        await fetchUsers()
       }
     } catch (error) {
       console.error('Error checking out:', error)
@@ -226,7 +253,7 @@ export default function Home() {
     }
 
     try {
-      const { data, error: signInError } = await supabase.auth.signInWithOtp({
+      const { error: signInError } = await supabase.auth.signInWithOtp({
         email,
         options: {
           emailRedirectTo: `${window.location.origin}/auth/callback`,
@@ -236,6 +263,7 @@ export default function Home() {
       if (signInError) throw signInError
 
       setError('Check your email for the login link!')
+      setEmail('')
     } catch (error) {
       console.error('Error during login:', error)
       setError('Failed to send login link. Please try again.')
@@ -251,6 +279,7 @@ export default function Home() {
       router.refresh()
     } catch (error) {
       console.error('Error signing out:', error)
+      setError('Failed to sign out')
     }
   }
 
@@ -285,7 +314,7 @@ export default function Home() {
           <CardHeader>
             <CardTitle>Login with Berkeley Email</CardTitle>
             <CardDescription>
-              We'll send you a magic link to verify your email
+              We&apos;ll send you a magic link to verify your email
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -390,4 +419,3 @@ export default function Home() {
     </main>
   )
 }
-
