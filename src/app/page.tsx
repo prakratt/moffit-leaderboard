@@ -273,27 +273,33 @@ export default function Home() {
       setError('Application not properly initialized')
       return
     }
-
+  
     if (!email.endsWith('@berkeley.edu')) {
       setError('Please use a valid Berkeley email address')
       return
     }
-
+  
     try {
-      const { error: signInError } = await supabase.auth.signInWithOtp({
+      const { data, error: signInError } = await supabase.auth.signInWithOtp({
         email,
         options: {
           emailRedirectTo: 'https://moffit-leaderboard.vercel.app/auth/callback',
+          shouldCreateUser: true, // Add this line
         },
       })
-
-      if (signInError) throw signInError
-
-      setError('Check your email for the login link!')
-      setEmail('')
-    } catch (error) {
+  
+      if (signInError) {
+        console.error('Sign in error:', signInError)
+        throw signInError
+      }
+  
+      if (data) {
+        setError('✅ Check your email for the login link!')
+        setEmail('')
+      }
+    } catch (error: any) { // Type as any to access error message
       console.error('Error during login:', error)
-      setError('Failed to send login link. Please try again.')
+      setError(error.message || 'Failed to send login link. Please try again.')
     }
   }
 
