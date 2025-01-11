@@ -284,7 +284,7 @@ export default function Home() {
         email,
         options: {
           emailRedirectTo: 'https://moffit-leaderboard.vercel.app/auth/callback',
-          shouldCreateUser: true, // Add this line
+          shouldCreateUser: true,
         },
       })
   
@@ -297,9 +297,14 @@ export default function Home() {
         setError('✅ Check your email for the login link!')
         setEmail('')
       }
-    } catch (error: any) { // Type as any to access error message
+    } catch (error) {
       console.error('Error during login:', error)
-      setError(error.message || 'Failed to send login link. Please try again.')
+      // Type guard to check if error is an object with message property
+      if (error && typeof error === 'object' && 'message' in error) {
+        setError((error as { message: string }).message)
+      } else {
+        setError('Failed to send login link. Please try again.')
+      }
     }
   }
 
