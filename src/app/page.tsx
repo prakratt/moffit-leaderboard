@@ -587,7 +587,8 @@ const handleCheckIn = async () => {
       // Initial update
       const updateTime = async () => {
         const now = Date.now();
-        const timeElapsed = Math.floor((now - loggedInUser.checkInTime) / 60000);
+        const checkInTime = loggedInUser?.checkInTime || now;
+        const timeElapsed = Math.floor((now - checkInTime) / 60000);
         const newTotalTime = loggedInUser.timeSpent + timeElapsed;
         
         // Update local state
