@@ -214,12 +214,7 @@ export default function Home() {
       setTimeout(() => setMessage(null), 5000);
     } catch (error) {
       console.error('Error resetting leaderboard:', error);
-      setMessage({ 
-        type: 'error', 
-        content: 'Failed to reset leaderboard' 
-      });
-      // Clear error message after 5 seconds
-      setTimeout(() => setMessage(null), 5000);
+      // Don't show error messages for failed resets
     }
   };
 
@@ -404,15 +399,15 @@ useEffect(() => {
     }
   };
 
-  // Initial check without showing error
-  checkAndResetLeaderboard().catch(() => {
-    // Silently handle any initial check errors
-    console.log('Initial reset check failed');
-  });
+  // Run initial check silently (without showing error messages)
+  checkAndResetLeaderboard().catch(console.error);
 
-  // Set up intervals
+  // Set up interval to check every minute
   const updateInterval = setInterval(fetchUsers, 5000);
-  const resetCheckInterval = setInterval(checkAndResetLeaderboard, 60000);
+  const resetCheckInterval = setInterval(() => {
+    // Check if reset is needed, but don't show error messages for routine checks
+    checkAndResetLeaderboard().catch(console.error);
+  }, 60000);
 
   return () => {
     clearInterval(updateInterval);
