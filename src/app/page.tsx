@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation'
 import { Clock, LogOut, Trophy, CheckCircle } from 'lucide-react'
 import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import {
@@ -282,18 +282,28 @@ export default function Home() {
         .select()
         .single();
   
-      if (createError) throw createError;
+      if (createError) {
+        console.error('Error creating user:', createError);
+        throw createError;
+      }
   
       if (newUser) {
+        // Update local state
         setLoggedInUser(newUser);
+        // Clear the form
+        setInitialDisplayName('');
+        // Close the dialog
         setShowWelcomeDialog(false);
+        // Show success message
         setMessage({ 
           type: 'success', 
           content: 'Welcome to MoffittBoard!' 
         });
+        // Refresh the users list
+        await fetchUsers();
       }
     } catch (error) {
-      console.error('Error creating user:', error);
+      console.error('Error during setup:', error);
       setMessage({ 
         type: 'error', 
         content: 'Failed to complete setup. Please try again.' 
@@ -767,34 +777,37 @@ return (
 
     {/* Welcome Dialog */}
     {showWelcomeDialog && (
-      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-        <Card className="w-full max-w-md mx-4">
-          <CardHeader>
-            <CardTitle>Welcome to MoffittBoard!</CardTitle>
-            <CardDescription>
-              Please set your display name to get started
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleWelcomeSubmit} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="displayName">Display Name</Label>
-                <Input
-                  id="displayName"
-                  value={initialDisplayName}
-                  onChange={(e) => setInitialDisplayName(e.target.value)}
-                  placeholder="Enter your display name"
-                  required
-                />
-              </div>
-              <Button type="submit" className="w-full">
-                Get Started
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
-      </div>
-    )}
+  <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <Card className="w-full max-w-md mx-4">
+      <form onSubmit={handleWelcomeSubmit}>
+        <CardHeader>
+          <CardTitle>Welcome to MoffittBoard!</CardTitle>
+          <CardDescription>
+            Please set your display name to get started
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-2">
+            <Label htmlFor="displayName">Display Name</Label>
+            <Input
+              id="displayName"
+              value={initialDisplayName}
+              onChange={(e) => setInitialDisplayName(e.target.value)}
+              placeholder="Enter your display name"
+              required
+              autoFocus
+            />
+          </div>
+        </CardContent>
+        <CardFooter>
+          <Button type="submit" className="w-full">
+            Get Started
+          </Button>
+        </CardFooter>
+      </form>
+    </Card>
+  </div>
+)}
   </main>
   )
 }
