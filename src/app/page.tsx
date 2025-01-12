@@ -39,6 +39,7 @@ interface User {
   timeSpent: number
   isCheckedIn?: boolean
   checkInTime?: number | null
+  displayName?: string
 }
 
 interface UserMetadata {
@@ -82,6 +83,8 @@ export default function Home() {
   const [loggedInUser, setLoggedInUser] = useState<User | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [isEditingName, setIsEditingName] = useState(false)
+  const [newDisplayName, setNewDisplayName] = useState('')
 
   const fetchUsers = useCallback(async () => {
     if (!supabase) return;
@@ -153,6 +156,35 @@ export default function Home() {
       setError('Failed to load user data')
     }
   }, [])
+
+  const handleUpdateDisplayName = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!supabase || !loggedInUser || !newDisplayName.trim()) return
+    setError(null)
+
+    try {
+      const { data, error: updateError } = await supabase
+        .from('users')
+        .update({ 
+          displayName: newDisplayName.trim()
+        })
+        .eq('id', loggedInUser.id)
+        .select()
+        .single()
+
+      if (updateError) throw updateError
+
+      if (data) {
+        setLoggedInUser({ ...loggedInUser, displayName: newDisplayName.trim() })
+        setIsEditingName(false)
+        setNewDisplayName('')
+        await fetchUsers()
+      }
+    } catch (error) {
+      console.error('Error updating display name:', error)
+      setError('Failed to update display name. Please try again.')
+    }
+  }
 
   useEffect(() => {
     try {
@@ -299,7 +331,6 @@ export default function Home() {
       }
     } catch (error) {
       console.error('Error during login:', error)
-      // Type guard to check if error is an object with message property
       if (error && typeof error === 'object' && 'message' in error) {
         setError((error as { message: string }).message)
       } else {
@@ -378,7 +409,7 @@ export default function Home() {
                       <TableCell className="font-medium">
                         {getRankDisplay(index)}
                       </TableCell>
-                      <TableCell>{user.name}</TableCell>
+                      <TableCell>{user.displayName || user.name}</TableCell>
                       <TableCell>{user.timeSpent}</TableCell>
                     </TableRow>
                   ))}
@@ -416,7 +447,51 @@ export default function Home() {
           ) : (
             <>
               <CardHeader>
-                <CardTitle>Welcome, {loggedInUser.name}!</CardTitle>
+                <CardTitle className="flex items-center justify-between">
+                  {isEditingName ? (
+                    <form 
+                      onSubmit={handleUpdateDisplayName}
+                      className="flex w-full gap-2"
+                    >
+                      <Input
+                        value={newDisplayName}
+                        onChange={(e) => setNewDisplayName(e.target.value)}
+                        placeholder="Enter display name"
+                        className="max-w-[200px]"
+                        autoFocus
+                        required
+                      />
+                      <Button type="submit" size="sm">
+                        Save
+                      </Button>
+                      <Button 
+                        type="button" 
+                        variant="outline" 
+                        size="sm"
+                        onClick={() => {
+                          setIsEditingName(false)
+                          setNewDisplayName('')
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                    </form>
+                  ) : (
+                    <>
+                      <span>Welcome, {loggedInUser.displayName || loggedInUser.name}!</span>
+                      <Button 
+                        variant="outline" 
+                        size="sm"
+                        onClick={() => {
+                          setIsEditingName(true)
+                          setNewDisplayName(loggedInUser.displayName || loggedInUser.name)
+                        }}
+                      >
+                        Edit Name
+                      </Button>
+                    </>
+                  )}
+                </CardTitle>
                 <CardDescription>
                   Rank #{getUserRank(loggedInUser.id, users)}
                   {getUserRank(loggedInUser.id, users) > 10 ? 
