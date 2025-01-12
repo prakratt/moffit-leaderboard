@@ -147,6 +147,21 @@ const isWithinMoffitt = async (): Promise<boolean> => {
   */
 };
 
+// Add this new function to update time in database
+const updateTimeInDatabase = async (userId: number, newTotalTime: number) => {
+  if (!supabase) return;
+  
+  try {
+    const { error } = await supabase
+      .from('users')
+      .update({ timeSpent: newTotalTime })
+      .eq('id', userId);
+
+    if (error) throw error;
+  } catch (error) {
+    console.error('Error updating time:', error);
+  }
+};
 
 export default function Home() {
   const router = useRouter()
@@ -464,49 +479,44 @@ const handleCheckIn = async () => {
   }
 };
 
+  // Modify the handleCheckOut function to avoid double-counting
   const handleCheckOut = async () => {
-    if (!supabase || !loggedInUser?.checkInTime) return
-    setMessage(null)
+    if (!supabase || !loggedInUser?.checkInTime) return;
+    setMessage(null);
 
     try {
-      const now = Date.now()
-      const timeElapsed = Math.floor((now - loggedInUser.checkInTime) / 60000)
-      const newTotalTime = loggedInUser.timeSpent + timeElapsed
-      
       const { data, error: updateError } = await supabase
         .from('users')
         .update({ 
           isCheckedIn: false,
-          timeSpent: newTotalTime,
           checkInTime: null
         })
         .eq('id', loggedInUser.id)
         .select()
-        .single()
+        .single();
 
-      if (updateError) throw updateError
+      if (updateError) throw updateError;
 
       if (data) {
         setLoggedInUser({
           ...data,
           isCheckedIn: false,
-          timeSpent: newTotalTime,
           checkInTime: null
-        })
-        await fetchUsers()
+        });
+        await fetchUsers();
         setMessage({ 
           type: 'success', 
-          content: `Successfully checked out! Added ${timeElapsed} minutes.` 
-        })
+          content: 'Successfully checked out!' 
+        });
       }
     } catch (error) {
-      console.error('Error checking out:', error)
+      console.error('Error checking out:', error);
       setMessage({ 
         type: 'error', 
         content: 'Failed to check out. Please try again.' 
-      })
+      });
     }
-  }
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -568,6 +578,44 @@ const handleCheckIn = async () => {
       setMessage({ type: 'error', content: 'Failed to sign out' })
     }
   }
+
+  // Modify the useEffect for real-time updates
+  useEffect(() => {
+    let intervalId: NodeJS.Timeout;
+
+    if (loggedInUser?.isCheckedIn && loggedInUser?.checkInTime) {
+      // Initial update
+      const updateTime = async () => {
+        const now = Date.now();
+        const timeElapsed = Math.floor((now - loggedInUser.checkInTime) / 60000);
+        const newTotalTime = loggedInUser.timeSpent + timeElapsed;
+        
+        // Update local state
+        setLoggedInUser(prev => prev ? {
+          ...prev,
+          timeSpent: newTotalTime
+        } : null);
+        
+        // Update database
+        await updateTimeInDatabase(loggedInUser.id, newTotalTime);
+        
+        // Trigger users list refresh
+        await fetchUsers();
+      };
+
+      // Update every minute
+      intervalId = setInterval(updateTime, 60000);
+      
+      // Run initial update
+      updateTime();
+    }
+
+    return () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+    };
+  }, [loggedInUser?.isCheckedIn, loggedInUser?.checkInTime]);
 
   if (isLoading) {
     return (
