@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@supabase/supabase-js'
 import { useRouter } from 'next/navigation'
-import { Clock, LogOut, Trophy } from 'lucide-react'
+import { Clock, LogOut, Trophy, CheckCircle } from 'lucide-react'
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -52,6 +52,11 @@ interface AuthUser {
   user_metadata?: UserMetadata
 }
 
+interface Message {
+  type: 'error' | 'success'
+  content: string
+}
+
 const getRankStyle = (index: number): string => {
   switch(index) {
     case 0: return "bg-yellow-50 dark:bg-yellow-900/20"
@@ -82,7 +87,7 @@ export default function Home() {
   const [email, setEmail] = useState('')
   const [loggedInUser, setLoggedInUser] = useState<User | null>(null)
   const [isLoading, setIsLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const [message, setMessage] = useState<Message | null>(null)
   const [isEditingName, setIsEditingName] = useState(false)
   const [newDisplayName, setNewDisplayName] = useState('')
 
@@ -98,7 +103,6 @@ export default function Home() {
       if (error) throw error
       setUsers(data || [])
       
-      // Update logged in user data if it exists
       if (loggedInUser) {
         const updatedUser = data?.find(u => u.id === loggedInUser.id)
         if (updatedUser) {
@@ -107,7 +111,7 @@ export default function Home() {
       }
     } catch (error) {
       console.error('Error fetching users:', error)
-      setError('Failed to fetch leaderboard')
+      setMessage({ type: 'error', content: 'Failed to fetch leaderboard' })
     }
   }, [loggedInUser])
 
@@ -116,7 +120,6 @@ export default function Home() {
     console.log("Handling user session for:", authUser.email);
     
     try {
-      // First try to get existing user
       const { data: existingUser, error: fetchError } = await supabase
         .from('users')
         .select('*')
@@ -130,7 +133,6 @@ export default function Home() {
       }
 
       console.log("Creating new user");
-      // If user doesn't exist, create new user
       const { data: newUser, error: createError } = await supabase
         .from('users')
         .insert([{ 
@@ -153,20 +155,20 @@ export default function Home() {
       }
     } catch (error) {
       console.error('Error handling user session:', error)
-      setError('Failed to load user data')
+      setMessage({ type: 'error', content: 'Failed to load user data' })
     }
   }, [])
 
   const handleUpdateDisplayName = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!supabase || !loggedInUser || !newDisplayName.trim()) return
-    setError(null)
+    setMessage(null)
 
     try {
       const { data, error: updateError } = await supabase
         .from('users')
         .update({ 
-          displayName: newDisplayName.trim()
+          display_name: newDisplayName.trim()
         })
         .eq('id', loggedInUser.id)
         .select()
@@ -179,18 +181,23 @@ export default function Home() {
         setIsEditingName(false)
         setNewDisplayName('')
         await fetchUsers()
+        setMessage({ 
+          type: 'success', 
+          content: 'Display name updated successfully!' 
+        })
       }
     } catch (error) {
       console.error('Error updating display name:', error)
-      setError('Failed to update display name. Please try again.')
+      setMessage({ 
+        type: 'error', 
+        content: 'Failed to update display name. Please try again.' 
+      })
     }
   }
 
   useEffect(() => {
     try {
       supabase = getSupabase()
-      
-      // Start fetching leaderboard data immediately
       fetchUsers()
 
       supabase.auth.getSession().then(({ data: { session } }) => {
@@ -221,7 +228,7 @@ export default function Home() {
       return () => subscription.unsubscribe()
     } catch (error) {
       console.error('Failed to initialize Supabase:', error)
-      setError('Failed to initialize application')
+      setMessage({ type: 'error', content: 'Failed to initialize application' })
       setIsLoading(false)
     }
   }, [handleUserSession, fetchUsers])
@@ -233,7 +240,7 @@ export default function Home() {
 
   const handleCheckIn = async () => {
     if (!supabase || !loggedInUser) return
-    setError(null)
+    setMessage(null)
 
     try {
       const now = Date.now()
@@ -253,16 +260,23 @@ export default function Home() {
       if (data) {
         setLoggedInUser({ ...data, checkInTime: now, isCheckedIn: true })
         await fetchUsers()
+        setMessage({ 
+          type: 'success', 
+          content: 'Successfully checked in!' 
+        })
       }
     } catch (error) {
       console.error('Error checking in:', error)
-      setError('Failed to check in. Please try again.')
+      setMessage({ 
+        type: 'error', 
+        content: 'Failed to check in. Please try again.' 
+      })
     }
   }
 
   const handleCheckOut = async () => {
     if (!supabase || !loggedInUser?.checkInTime) return
-    setError(null)
+    setMessage(null)
 
     try {
       const now = Date.now()
@@ -290,24 +304,31 @@ export default function Home() {
           checkInTime: null
         })
         await fetchUsers()
+        setMessage({ 
+          type: 'success', 
+          content: `Successfully checked out! Added ${timeElapsed} minutes.` 
+        })
       }
     } catch (error) {
       console.error('Error checking out:', error)
-      setError('Failed to check out. Please try again.')
+      setMessage({ 
+        type: 'error', 
+        content: 'Failed to check out. Please try again.' 
+      })
     }
   }
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
-    setError(null)
+    setMessage(null)
     
     if (!supabase) {
-      setError('Application not properly initialized')
+      setMessage({ type: 'error', content: 'Application not properly initialized' })
       return
     }
   
     if (!email.endsWith('@berkeley.edu')) {
-      setError('Please use a valid Berkeley email address')
+      setMessage({ type: 'error', content: 'Please use a valid Berkeley email address' })
       return
     }
   
@@ -320,21 +341,27 @@ export default function Home() {
         },
       })
   
-      if (signInError) {
-        console.error('Sign in error:', signInError)
-        throw signInError
-      }
+      if (signInError) throw signInError
   
       if (data) {
-        setError('✅ Check your email for the login link!')
         setEmail('')
+        setMessage({ 
+          type: 'success', 
+          content: '✨ Magic link sent! Check your email to log in.' 
+        })
       }
     } catch (error) {
       console.error('Error during login:', error)
       if (error && typeof error === 'object' && 'message' in error) {
-        setError((error as { message: string }).message)
+        setMessage({ 
+          type: 'error', 
+          content: (error as { message: string }).message 
+        })
       } else {
-        setError('Failed to send login link. Please try again.')
+        setMessage({ 
+          type: 'error', 
+          content: 'Failed to send login link. Please try again.' 
+        })
       }
     }
   }
@@ -348,7 +375,7 @@ export default function Home() {
       router.refresh()
     } catch (error) {
       console.error('Error signing out:', error)
-      setError('Failed to sign out')
+      setMessage({ type: 'error', content: 'Failed to sign out' })
     }
   }
 
@@ -372,9 +399,19 @@ export default function Home() {
         </CardHeader>
       </Card>
       
-      {error && (
-        <Alert variant="destructive" className="mb-6">
-          <AlertDescription>{error}</AlertDescription>
+      {message && (
+        <Alert 
+          variant={message.type === 'error' ? 'destructive' : 'default'} 
+          className={`mb-6 ${
+            message.type === 'success' 
+              ? 'bg-green-500/20 text-green-500 border-green-500' 
+              : ''
+          }`}
+        >
+          {message.type === 'success' && <CheckCircle className="h-4 w-4 mr-2" />}
+          <AlertDescription className="font-medium">
+            {message.content}
+          </AlertDescription>
         </Alert>
       )}
       
