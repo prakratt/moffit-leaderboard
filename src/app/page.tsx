@@ -438,12 +438,11 @@ const handleCheckIn = async () => {
   setMessage(null);
 
   try {
-    // Location check (commented out for now)
     const isInMoffitt = await isWithinMoffitt();
     if (!isInMoffitt) {
       setMessage({
         type: 'error',
-        content: 'You must be in or near Moffitt Library to check in'
+        content: 'You must be in Moffitt Library to check in'
       });
       return;
     }
@@ -589,26 +588,28 @@ const handleCheckIn = async () => {
         const now = Date.now();
         const checkInTime = loggedInUser?.checkInTime || now;
         const timeElapsed = Math.floor((now - checkInTime) / 60000);
-        const newTotalTime = loggedInUser.timeSpent + timeElapsed;
         
-        // Update local state
-        setLoggedInUser(prev => prev ? {
-          ...prev,
-          timeSpent: newTotalTime
-        } : null);
-        
-        // Update database
-        await updateTimeInDatabase(loggedInUser.id, newTotalTime);
-        
-        // Trigger users list refresh
-        await fetchUsers();
+        // Only update if time has actually elapsed
+        if (timeElapsed > 0) {
+          const newTotalTime = loggedInUser.timeSpent + 1; // Add only 1 minute per update
+          
+          // Update local state
+          setLoggedInUser(prev => prev ? {
+            ...prev,
+            timeSpent: newTotalTime,
+            checkInTime: now // Update checkInTime to prevent double counting
+          } : null);
+          
+          // Update database
+          await updateTimeInDatabase(loggedInUser.id, newTotalTime);
+          
+          // Trigger users list refresh
+          await fetchUsers();
+        }
       };
 
-      // Update every minute
+      // Update every minute (60000 ms)
       intervalId = setInterval(updateTime, 60000);
-      
-      // Run initial update
-      updateTime();
     }
 
     return () => {
@@ -617,6 +618,12 @@ const handleCheckIn = async () => {
       }
     };
   }, [loggedInUser?.isCheckedIn, loggedInUser?.checkInTime]);
+
+  // Add this useEffect to update the UI more frequently
+  useEffect(() => {
+    const intervalId = setInterval(fetchUsers, 5000); // Update UI every 5 seconds
+    return () => clearInterval(intervalId);
+  }, [fetchUsers]);
 
   if (isLoading) {
     return (
