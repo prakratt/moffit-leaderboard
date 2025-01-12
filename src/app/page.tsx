@@ -233,13 +233,15 @@ export default function Home() {
       if (!fetchError && existingUser) {
         console.log("Found existing user:", existingUser);
         setLoggedInUser(existingUser);
+        setShowWelcomeDialog(false); // Ensure dialog is closed for existing users
         return;
       }
   
-      console.log("New user detected");
-      // For new users, show the welcome dialog
-      setShowWelcomeDialog(true);
-      // Don't create the user yet - we'll do that after they set their display name
+      // Only show welcome dialog for new users
+      if (fetchError && fetchError.code === 'PGRST116') { // No results error
+        console.log("New user detected");
+        setShowWelcomeDialog(true);
+      }
       
     } catch (error) {
       console.error('Error handling user session:', error)
