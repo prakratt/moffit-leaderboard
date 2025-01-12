@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@supabase/supabase-js'
 import { useRouter } from 'next/navigation'
 import { Clock, LogOut, Trophy, CheckCircle } from 'lucide-react'
-
+import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -154,6 +154,8 @@ export default function Home() {
   const [message, setMessage] = useState<Message | null>(null)
   const [isEditingName, setIsEditingName] = useState(false)
   const [newDisplayName, setNewDisplayName] = useState('')
+  const [showWelcomeDialog, setShowWelcomeDialog] = useState(false);
+  const [initialDisplayName, setInitialDisplayName] = useState('');
 
   const fetchUsers = useCallback(async () => {
     if (!supabase) return;
@@ -223,44 +225,81 @@ export default function Home() {
     console.log("Handling user session for:", authUser.email);
     
     try {
+      // First try to get existing user
       const { data: existingUser, error: fetchError } = await supabase
         .from('users')
         .select('*')
         .eq('email', authUser.email)
         .single()
-
+  
       if (!fetchError && existingUser) {
         console.log("Found existing user:", existingUser);
-        setLoggedInUser(existingUser)
-        return
+        setLoggedInUser(existingUser);
+        return;
       }
-
-      console.log("Creating new user");
-      const { data: newUser, error: createError } = await supabase
-        .from('users')
-        .insert([{ 
-          email: authUser.email,
-          name: authUser.email.split('@')[0],
-          timeSpent: 0,
-          isCheckedIn: false
-        }])
-        .select()
-        .single()
-
-      if (createError) {
-        console.error("Error creating user:", createError);
-        throw createError;
-      }
-
-      if (newUser) {
-        console.log("Created new user:", newUser);
-        setLoggedInUser(newUser)
-      }
+  
+      console.log("New user detected");
+      // For new users, show the welcome dialog
+      setShowWelcomeDialog(true);
+      // Don't create the user yet - we'll do that after they set their display name
+      
     } catch (error) {
       console.error('Error handling user session:', error)
       setMessage({ type: 'error', content: 'Failed to load user data' })
     }
-  }, [])
+  }, []);
+  
+  const handleWelcomeSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    try {
+      // Get the current user
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user?.email) {
+        throw new Error('No authenticated user found');
+      }
+  
+      // First check location
+      const isInMoffitt = await isWithinMoffitt();
+      if (!isInMoffitt) {
+        setMessage({
+          type: 'error',
+          content: 'You must be in or near Moffitt Library to use this app'
+        });
+        return;
+      }
+  
+      // Create new user with display name
+      const { data: newUser, error: createError } = await supabase
+        .from('users')
+        .insert([{ 
+          email: user.email,
+          name: user.email.split('@')[0],
+          display_name: initialDisplayName.trim(),
+          timeSpent: 0,
+          isCheckedIn: false
+        }])
+        .select()
+        .single();
+  
+      if (createError) throw createError;
+  
+      if (newUser) {
+        setLoggedInUser(newUser);
+        setShowWelcomeDialog(false);
+        setMessage({ 
+          type: 'success', 
+          content: 'Welcome to MoffittBoard!' 
+        });
+      }
+    } catch (error) {
+      console.error('Error creating user:', error);
+      setMessage({ 
+        type: 'error', 
+        content: 'Failed to complete setup. Please try again.' 
+      });
+    }
+  };
 
   const handleUpdateDisplayName = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -360,15 +399,21 @@ useEffect(() => {
 
 useEffect(() => {
   const checkAndResetLeaderboard = async () => {
+    // Only attempt reset if it's needed
     if (shouldResetLeaderboard()) {
       await resetLeaderboard();
     }
   };
 
-  checkAndResetLeaderboard();
+  // Initial check without showing error
+  checkAndResetLeaderboard().catch(() => {
+    // Silently handle any initial check errors
+    console.log('Initial reset check failed');
+  });
 
+  // Set up intervals
   const updateInterval = setInterval(fetchUsers, 5000);
-  const resetCheckInterval = setInterval(checkAndResetLeaderboard, 60000); // Check every minute
+  const resetCheckInterval = setInterval(checkAndResetLeaderboard, 60000);
 
   return () => {
     clearInterval(updateInterval);
@@ -535,190 +580,221 @@ const handleCheckIn = async () => {
       </div>
     )
   }
-
-  return (
-    <main className="container mx-auto p-6 max-w-5xl">
-      <Card className="mb-8">
+// Complete JSX return statement
+return (
+  <main className="container mx-auto p-6 max-w-5xl">
+    <Card className="mb-8">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Trophy className="h-6 w-6" />
+          MoffittBoard
+        </CardTitle>
+        <CardDescription>Track your study time at Moffitt Library</CardDescription>
+      </CardHeader>
+    </Card>
+    
+    {message && (
+      <Alert 
+        variant={message.type === 'error' ? 'destructive' : 'default'} 
+        className={`mb-6 ${
+          message.type === 'success' 
+            ? 'bg-green-500/20 text-green-500 border-green-500' 
+            : ''
+        }`}
+      >
+        {message.type === 'success' && <CheckCircle className="h-4 w-4 mr-2" />}
+        <AlertDescription className="font-medium">
+          {message.content}
+        </AlertDescription>
+      </Alert>
+    )}
+    
+    <div className="grid gap-6 md:grid-cols-2">
+      {/* Leaderboard Card - Always visible */}
+      <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Trophy className="h-6 w-6" />
-            MoffittBoard
-          </CardTitle>
-          <CardDescription>Track your study time at Moffitt Library</CardDescription>
+          <CardTitle>Current Rankings</CardTitle>
+          <CardDescription>Top students by study time</CardDescription>
         </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Rank</TableHead>
+                <TableHead>Name</TableHead>
+                <TableHead>Time (min)</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {users
+                .sort((a, b) => b.timeSpent - a.timeSpent)
+                .map((user, index) => (
+                  <TableRow
+                    key={user.id}
+                    className={`${
+                      loggedInUser?.id === user.id 
+                        ? 'bg-blue-50 dark:bg-blue-900/20' 
+                        : ''
+                    } ${index < 3 ? getRankStyle(index) : ''}`}
+                  >
+                    <TableCell className="font-medium">
+                      {getRankDisplay(index)}
+                    </TableCell>
+                    <TableCell>{user.display_name || user.name}</TableCell>
+                    <TableCell>{user.timeSpent}</TableCell>
+                  </TableRow>
+                ))}
+            </TableBody>
+          </Table>
+        </CardContent>
       </Card>
-      
-      {message && (
-        <Alert 
-          variant={message.type === 'error' ? 'destructive' : 'default'} 
-          className={`mb-6 ${
-            message.type === 'success' 
-              ? 'bg-green-500/20 text-green-500 border-green-500' 
-              : ''
-          }`}
-        >
-          {message.type === 'success' && <CheckCircle className="h-4 w-4 mr-2" />}
-          <AlertDescription className="font-medium">
-            {message.content}
-          </AlertDescription>
-        </Alert>
-      )}
-      
-      <div className="grid gap-6 md:grid-cols-2">
-        {/* Leaderboard Card - Always visible */}
-        <Card>
+
+      {/* Login/User Card */}
+      <Card>
+        {!loggedInUser ? (
+          <>
+            <CardHeader>
+              <CardTitle>Login to Track Time</CardTitle>
+              <CardDescription>
+                Sign in with your Berkeley email to start tracking your study time
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={handleLogin} className="space-y-4">
+                <Input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="your@berkeley.edu"
+                  pattern=".+@berkeley\.edu"
+                  required
+                />
+                <Button type="submit">
+                  Send Magic Link
+                </Button>
+              </form>
+            </CardContent>
+          </>
+        ) : (
+          <>
+            <CardHeader>
+              <CardTitle className="flex items-center justify-between">
+                {isEditingName ? (
+                  <form 
+                    onSubmit={handleUpdateDisplayName}
+                    className="flex w-full gap-2"
+                  >
+                    <Input
+                      value={newDisplayName}
+                      onChange={(e) => setNewDisplayName(e.target.value)}
+                      placeholder="Enter display name"
+                      className="max-w-[200px]"
+                      autoFocus
+                      required
+                    />
+                    <Button type="submit" size="sm">
+                      Save
+                    </Button>
+                    <Button 
+                      type="button" 
+                      variant="outline" 
+                      size="sm"
+                      onClick={() => {
+                        setIsEditingName(false)
+                        setNewDisplayName('')
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                  </form>
+                ) : (
+                  <>
+                    <span>Welcome, {loggedInUser.display_name || loggedInUser.name}!</span>
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      onClick={() => {
+                        setIsEditingName(true)
+                        setNewDisplayName(loggedInUser.display_name || loggedInUser.name)
+                      }}
+                    >
+                      Edit Name
+                    </Button>
+                  </>
+                )}
+              </CardTitle>
+              <CardDescription>
+                Rank #{getUserRank(loggedInUser.id, users)}
+                {getUserRank(loggedInUser.id, users) > 10 ? 
+                  ` (out of ${users.length})` : 
+                  ''}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center gap-4">
+                <Clock className="h-4 w-4 text-muted-foreground" />
+                <span>Total time: {loggedInUser.timeSpent} minutes</span>
+              </div>
+              <div className="flex gap-2">
+                {loggedInUser.isCheckedIn ? (
+                  <Button 
+                    variant="destructive"
+                    onClick={handleCheckOut}
+                  >
+                    Check Out
+                  </Button>
+                ) : (
+                  <Button 
+                    variant="default"
+                    onClick={handleCheckIn}
+                  >
+                    Check In
+                  </Button>
+                )}
+                <Button 
+                  variant="outline" 
+                  onClick={handleSignOut}
+                >
+                  <LogOut className="h-4 w-4 mr-2" />
+                  Sign Out
+                </Button>
+              </div>
+            </CardContent>
+          </>
+        )}
+      </Card>
+    </div>
+
+    {/* Welcome Dialog */}
+    {showWelcomeDialog && (
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+        <Card className="w-full max-w-md mx-4">
           <CardHeader>
-            <CardTitle>Current Rankings</CardTitle>
-            <CardDescription>Top students by study time</CardDescription>
+            <CardTitle>Welcome to MoffittBoard!</CardTitle>
+            <CardDescription>
+              Please set your display name to get started
+            </CardDescription>
           </CardHeader>
           <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Rank</TableHead>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Time (min)</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {users
-                  .sort((a, b) => b.timeSpent - a.timeSpent)
-                  .map((user, index) => (
-                    <TableRow
-                      key={user.id}
-                      className={`${
-                        loggedInUser?.id === user.id 
-                          ? 'bg-blue-50 dark:bg-blue-900/20' 
-                          : ''
-                      } ${index < 3 ? getRankStyle(index) : ''}`}
-                    >
-                      <TableCell className="font-medium">
-                        {getRankDisplay(index)}
-                      </TableCell>
-                      <TableCell>{user.display_name || user.name}</TableCell>
-                      <TableCell>{user.timeSpent}</TableCell>
-                    </TableRow>
-                  ))}
-              </TableBody>
-            </Table>
+            <form onSubmit={handleWelcomeSubmit} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="displayName">Display Name</Label>
+                <Input
+                  id="displayName"
+                  value={initialDisplayName}
+                  onChange={(e) => setInitialDisplayName(e.target.value)}
+                  placeholder="Enter your display name"
+                  required
+                />
+              </div>
+              <Button type="submit" className="w-full">
+                Get Started
+              </Button>
+            </form>
           </CardContent>
         </Card>
-
-        {/* Login/User Card */}
-        <Card>
-          {!loggedInUser ? (
-            <>
-              <CardHeader>
-                <CardTitle>Login to Track Time</CardTitle>
-                <CardDescription>
-                  Sign in with your Berkeley email to start tracking your study time
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <form onSubmit={handleLogin} className="space-y-4">
-                  <Input
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="your@berkeley.edu"
-                    pattern=".+@berkeley\.edu"
-                    required
-                  />
-                  <Button type="submit">
-                    Send Magic Link
-                  </Button>
-                </form>
-              </CardContent>
-            </>
-          ) : (
-            <>
-              <CardHeader>
-                <CardTitle className="flex items-center justify-between">
-                  {isEditingName ? (
-                    <form 
-                      onSubmit={handleUpdateDisplayName}
-                      className="flex w-full gap-2"
-                    >
-                      <Input
-                        value={newDisplayName}
-                        onChange={(e) => setNewDisplayName(e.target.value)}
-                        placeholder="Enter display name"
-                        className="max-w-[200px]"
-                        autoFocus
-                        required
-                      />
-                      <Button type="submit" size="sm">
-                        Save
-                      </Button>
-                      <Button 
-                        type="button" 
-                        variant="outline" 
-                        size="sm"
-                        onClick={() => {
-                          setIsEditingName(false)
-                          setNewDisplayName('')
-                        }}
-                      >
-                        Cancel
-                      </Button>
-                    </form>
-                  ) : (
-                    <>
-                      <span>Welcome, {loggedInUser.display_name || loggedInUser.name}!</span>
-                      <Button 
-                        variant="outline" 
-                        size="sm"
-                        onClick={() => {
-                          setIsEditingName(true)
-                          setNewDisplayName(loggedInUser.display_name || loggedInUser.name)
-                        }}
-                      >
-                        Edit Name
-                      </Button>
-                    </>
-                  )}
-                </CardTitle>
-                <CardDescription>
-                  Rank #{getUserRank(loggedInUser.id, users)}
-                  {getUserRank(loggedInUser.id, users) > 10 ? 
-                    ` (out of ${users.length})` : 
-                    ''}
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex items-center gap-4">
-                  <Clock className="h-4 w-4 text-muted-foreground" />
-                  <span>Total time: {loggedInUser.timeSpent} minutes</span>
-                </div>
-                <div className="flex gap-2">
-                  {loggedInUser.isCheckedIn ? (
-                    <Button 
-                      variant="destructive"
-                      onClick={handleCheckOut}
-                    >
-                      Check Out
-                    </Button>
-                  ) : (
-                    <Button 
-                      variant="default"
-                      onClick={handleCheckIn}
-                    >
-                      Check In
-                    </Button>
-                  )}
-                  <Button 
-                    variant="outline" 
-                    onClick={handleSignOut}
-                  >
-                    <LogOut className="h-4 w-4 mr-2" />
-                    Sign Out
-                  </Button>
-                </div>
-              </CardContent>
-            </>
-          )}
-        </Card>
       </div>
-    </main>
+    )}
+  </main>
   )
 }
