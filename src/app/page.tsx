@@ -81,6 +81,24 @@ const getUserRank = (userId: number, usersList: User[]): number => {
   return index === -1 ? usersList.length : index + 1
 }
 
+const shouldResetLeaderboard = () => {
+  const pstDate = new Date().toLocaleString("en-US", { timeZone: "America/Los_Angeles" });
+  const currentTime = new Date(pstDate);
+  
+  const resetHour = 3; // 3:00 AM PST
+  const resetTime = new Date(currentTime);
+  resetTime.setHours(resetHour, 0, 0, 0);
+  
+  const lastReset = localStorage.getItem('lastLeaderboardReset');
+  
+  if (!lastReset || new Date(lastReset) < resetTime) {
+    return true;
+  }
+  
+  return false;
+};
+
+
 export default function Home() {
   const router = useRouter()
   const [users, setUsers] = useState<User[]>([])
@@ -114,6 +132,35 @@ export default function Home() {
       setMessage({ type: 'error', content: 'Failed to fetch leaderboard' })
     }
   }, [loggedInUser])
+
+  const resetLeaderboard = async () => {
+    if (!supabase) return;
+    
+    try {
+      const { error } = await supabase
+        .from('users')
+        .update({ 
+          timeSpent: 0,
+          isCheckedIn: false,
+          checkInTime: null
+        });
+  
+      if (error) throw error;
+      localStorage.setItem('lastLeaderboardReset', new Date().toISOString());
+      await fetchUsers();
+      
+      setMessage({ 
+        type: 'success', 
+        content: 'Leaderboard has been reset for the new day!' 
+      });
+    } catch (error) {
+      console.error('Error resetting leaderboard:', error);
+      setMessage({ 
+        type: 'error', 
+        content: 'Failed to reset leaderboard' 
+      });
+    }
+  };
 
   const handleUserSession = useCallback(async (authUser: AuthUser) => {
     if (!authUser.email) return;
@@ -250,10 +297,28 @@ export default function Home() {
     }
   }, [handleUserSession, fetchUsers])
 
-  useEffect(() => {
-    const intervalId = setInterval(fetchUsers, 5000)
-    return () => clearInterval(intervalId)
-  }, [fetchUsers])
+useEffect(() => {
+  const intervalId = setInterval(fetchUsers, 5000)
+  return () => clearInterval(intervalId)
+}, [fetchUsers])
+
+useEffect(() => {
+  const checkAndResetLeaderboard = async () => {
+    if (shouldResetLeaderboard()) {
+      await resetLeaderboard();
+    }
+  };
+
+  checkAndResetLeaderboard();
+
+  const updateInterval = setInterval(fetchUsers, 5000);
+  const resetCheckInterval = setInterval(checkAndResetLeaderboard, 60000); // Check every minute
+
+  return () => {
+    clearInterval(updateInterval);
+    clearInterval(resetCheckInterval);
+  };
+}, [fetchUsers]);
 
   const handleCheckIn = async () => {
     if (!supabase || !loggedInUser) return
