@@ -39,7 +39,7 @@ interface User {
   timeSpent: number
   isCheckedIn?: boolean
   checkInTime?: number | null
-  displayName?: string
+  display_name?: string  // Changed from displayName to display_name
 }
 
 interface UserMetadata {
@@ -163,8 +163,9 @@ export default function Home() {
     e.preventDefault()
     if (!supabase || !loggedInUser || !newDisplayName.trim()) return
     setMessage(null)
-
+  
     try {
+      // First update the database
       const { data, error: updateError } = await supabase
         .from('users')
         .update({ 
@@ -173,18 +174,34 @@ export default function Home() {
         .eq('id', loggedInUser.id)
         .select()
         .single()
-
+  
       if (updateError) throw updateError
-
+  
       if (data) {
-        setLoggedInUser({ ...loggedInUser, displayName: newDisplayName.trim() })
+        // Update the logged-in user state with the new display name
+        setLoggedInUser(prevUser => ({
+          ...prevUser!,
+          displayName: data.display_name // Make sure to use data.display_name
+        }))
+  
+        // Also update the user in the users list
+        setUsers(prevUsers => 
+          prevUsers.map(user => 
+            user.id === loggedInUser.id 
+              ? { ...user, displayName: data.display_name }
+              : user
+          )
+        )
+  
         setIsEditingName(false)
         setNewDisplayName('')
-        await fetchUsers()
         setMessage({ 
           type: 'success', 
           content: 'Display name updated successfully!' 
         })
+  
+        // Force a refresh of the users list
+        await fetchUsers()
       }
     } catch (error) {
       console.error('Error updating display name:', error)
@@ -446,7 +463,7 @@ export default function Home() {
                       <TableCell className="font-medium">
                         {getRankDisplay(index)}
                       </TableCell>
-                      <TableCell>{user.displayName || user.name}</TableCell>
+                      <TableCell>{user.display_name || user.name}</TableCell>
                       <TableCell>{user.timeSpent}</TableCell>
                     </TableRow>
                   ))}
@@ -515,13 +532,13 @@ export default function Home() {
                     </form>
                   ) : (
                     <>
-                      <span>Welcome, {loggedInUser.displayName || loggedInUser.name}!</span>
+                      <span>Welcome, {loggedInUser.display_name || loggedInUser.name}!</span>
                       <Button 
                         variant="outline" 
                         size="sm"
                         onClick={() => {
                           setIsEditingName(true)
-                          setNewDisplayName(loggedInUser.displayName || loggedInUser.name)
+                          setNewDisplayName(loggedInUser.display_name || loggedInUser.name)
                         }}
                       >
                         Edit Name
