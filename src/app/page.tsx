@@ -85,17 +85,63 @@ const shouldResetLeaderboard = () => {
   const pstDate = new Date().toLocaleString("en-US", { timeZone: "America/Los_Angeles" });
   const currentTime = new Date(pstDate);
   
-  const resetHour = 3; // 3:00 AM PST
+  // Set reset time to midnight (00:00) PST
   const resetTime = new Date(currentTime);
-  resetTime.setHours(resetHour, 0, 0, 0);
+  resetTime.setHours(0, 0, 0, 0);
   
   const lastReset = localStorage.getItem('lastLeaderboardReset');
   
-  if (!lastReset || new Date(lastReset) < resetTime) {
+  if (!lastReset) {
     return true;
   }
-  
-  return false;
+
+  const lastResetDate = new Date(lastReset);
+  // Check if the last reset was before today's reset time
+  return lastResetDate < resetTime;
+};
+
+// Location verification helper (disabled for now)
+const isWithinMoffitt = async (): Promise<boolean> => {
+  try {
+    // Moffitt Library coordinates
+    const MOFFITT_LAT = 37.872570;
+    const MOFFITT_LON = -122.260823;
+    const ALLOWED_RADIUS = 100; // meters
+
+    return new Promise((resolve) => {
+      if (process.env.NEXT_PUBLIC_DISABLE_LOCATION_CHECK === 'true') {
+        resolve(true);
+        return;
+      }
+
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          // Calculate distance using Haversine formula
+          const R = 6371e3; // Earth's radius in meters
+          const φ1 = position.coords.latitude * Math.PI/180;
+          const φ2 = MOFFITT_LAT * Math.PI/180;
+          const Δφ = (MOFFITT_LAT - position.coords.latitude) * Math.PI/180;
+          const Δλ = (MOFFITT_LON - position.coords.longitude) * Math.PI/180;
+
+          const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+                    Math.cos(φ1) * Math.cos(φ2) *
+                    Math.sin(Δλ/2) * Math.sin(Δλ/2);
+          const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+          const distance = R * c;
+
+          resolve(distance <= ALLOWED_RADIUS);
+        },
+        () => {
+          // If location access is denied, allow access for now
+          resolve(true);
+        }
+      );
+    });
+  } catch (error) {
+    console.error('Location check error:', error);
+    // Allow access if there's an error for now
+    return true;
+  }
 };
 
 
@@ -146,19 +192,29 @@ export default function Home() {
         });
   
       if (error) throw error;
+      
+      // Update last reset time in localStorage
       localStorage.setItem('lastLeaderboardReset', new Date().toISOString());
+      
+      // Update all states
       await fetchUsers();
       
+      // Only show message when actually resetting
       setMessage({ 
         type: 'success', 
         content: 'Leaderboard has been reset for the new day!' 
       });
+  
+      // Clear message after 5 seconds
+      setTimeout(() => setMessage(null), 5000);
     } catch (error) {
       console.error('Error resetting leaderboard:', error);
       setMessage({ 
         type: 'error', 
         content: 'Failed to reset leaderboard' 
       });
+      // Clear error message after 5 seconds
+      setTimeout(() => setMessage(null), 5000);
     }
   };
 
@@ -320,41 +376,52 @@ useEffect(() => {
   };
 }, [fetchUsers]);
 
-  const handleCheckIn = async () => {
-    if (!supabase || !loggedInUser) return
-    setMessage(null)
+  // Update your handleCheckIn function to include location verification (disabled for now)
+const handleCheckIn = async () => {
+  if (!supabase || !loggedInUser) return;
+  setMessage(null);
 
-    try {
-      const now = Date.now()
-      const { data, error: updateError } = await supabase
-        .from('users')
-        .update({ 
-          isCheckedIn: true, 
-          checkInTime: now,
-          timeSpent: loggedInUser.timeSpent
-        })
-        .eq('id', loggedInUser.id)
-        .select()
-        .single()
-
-      if (updateError) throw updateError
-
-      if (data) {
-        setLoggedInUser({ ...data, checkInTime: now, isCheckedIn: true })
-        await fetchUsers()
-        setMessage({ 
-          type: 'success', 
-          content: 'Successfully checked in!' 
-        })
-      }
-    } catch (error) {
-      console.error('Error checking in:', error)
-      setMessage({ 
-        type: 'error', 
-        content: 'Failed to check in. Please try again.' 
-      })
+  try {
+    // Location check (commented out for now)
+    const isInMoffitt = await isWithinMoffitt();
+    if (!isInMoffitt) {
+      setMessage({
+        type: 'error',
+        content: 'You must be in or near Moffitt Library to check in'
+      });
+      return;
     }
+
+    const now = Date.now();
+    const { data, error: updateError } = await supabase
+      .from('users')
+      .update({ 
+        isCheckedIn: true, 
+        checkInTime: now,
+        timeSpent: loggedInUser.timeSpent
+      })
+      .eq('id', loggedInUser.id)
+      .select()
+      .single();
+
+    if (updateError) throw updateError;
+
+    if (data) {
+      setLoggedInUser({ ...data, checkInTime: now, isCheckedIn: true });
+      await fetchUsers();
+      setMessage({ 
+        type: 'success', 
+        content: 'Successfully checked in!' 
+      });
+    }
+  } catch (error) {
+    console.error('Error checking in:', error);
+    setMessage({ 
+      type: 'error', 
+      content: 'Failed to check in. Please try again.' 
+    });
   }
+};
 
   const handleCheckOut = async () => {
     if (!supabase || !loggedInUser?.checkInTime) return
