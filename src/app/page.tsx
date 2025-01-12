@@ -102,11 +102,15 @@ const shouldResetLeaderboard = () => {
 
 // Location verification helper (disabled for now)
 const isWithinMoffitt = async (): Promise<boolean> => {
+  // Always return true to disable location checking
+  return true;
+  
+  // Original code commented out for future reference
+  /*
   try {
-    // Moffitt Library coordinates
     const MOFFITT_LAT = 37.872570;
     const MOFFITT_LON = -122.260823;
-    const ALLOWED_RADIUS = 100; // meters
+    const ALLOWED_RADIUS = 100;
 
     return new Promise((resolve) => {
       if (process.env.NEXT_PUBLIC_DISABLE_LOCATION_CHECK === 'true') {
@@ -117,7 +121,7 @@ const isWithinMoffitt = async (): Promise<boolean> => {
       navigator.geolocation.getCurrentPosition(
         (position) => {
           // Calculate distance using Haversine formula
-          const R = 6371e3; // Earth's radius in meters
+          const R = 6371e3;
           const φ1 = position.coords.latitude * Math.PI/180;
           const φ2 = MOFFITT_LAT * Math.PI/180;
           const Δφ = (MOFFITT_LAT - position.coords.latitude) * Math.PI/180;
@@ -132,16 +136,15 @@ const isWithinMoffitt = async (): Promise<boolean> => {
           resolve(distance <= ALLOWED_RADIUS);
         },
         () => {
-          // If location access is denied, allow access for now
           resolve(true);
         }
       );
     });
   } catch (error) {
     console.error('Location check error:', error);
-    // Allow access if there's an error for now
     return true;
   }
+  */
 };
 
 
@@ -253,22 +256,11 @@ export default function Home() {
     e.preventDefault();
     
     try {
-      // Get the current user
       const { data: { user } } = await supabase.auth.getUser();
       if (!user?.email) {
         throw new Error('No authenticated user found');
       }
-  
-      // First check location
-      const isInMoffitt = await isWithinMoffitt();
-      if (!isInMoffitt) {
-        setMessage({
-          type: 'error',
-          content: 'You must be in or near Moffitt Library to use this app'
-        });
-        return;
-      }
-  
+
       // Create new user with display name
       const { data: newUser, error: createError } = await supabase
         .from('users')
@@ -281,12 +273,9 @@ export default function Home() {
         }])
         .select()
         .single();
-  
-      if (createError) {
-        console.error('Error creating user:', createError);
-        throw createError;
-      }
-  
+
+      if (createError) throw createError;
+
       if (newUser) {
         // Update local state
         setLoggedInUser(newUser);
